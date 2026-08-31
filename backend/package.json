@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node test/auth.test.js && node test/inbox.test.js && node test/line-license.test.js && node test/digest.test.js && node test/weekly-report.test.js && node test/cors.test.js && node test/account-policy.test.js && node test/projects-masker.test.js && node test/projects-visibility.test.js && node test/projects-assist.test.js && node test/connectors-chatwork.test.js && node test/projects-routes.test.js"
+    "test": "node test/auth.test.js && node test/inbox.test.js && node test/line-license.test.js && node test/digest.test.js && node test/weekly-report.test.js && node test/cors.test.js && node test/account-policy.test.js && node test/projects-masker.test.js && node test/projects-visibility.test.js && node test/projects-assist.test.js && node test/projects-leak-guard.test.js && node test/connectors-chatwork.test.js && node test/projects-routes.test.js"
   },
   "devDependencies": {}
 }

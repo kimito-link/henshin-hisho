@@ -58,6 +58,26 @@ test('buildAssistPrompt: draft_replyモードはintentを指示文に含める',
   assert.ok(prompt.includes('顧客向け返信案を作成'));
 });
 
+test('buildAssistPrompt: audience省略時はcustomer扱いになる(既定挙動を壊さない)', () => {
+  const prompt = buildAssistPrompt({ project, channels, publicMessages, internalMessages, mode: 'draft_reply', intent: 'お礼を伝える' });
+  assert.ok(prompt.includes('顧客向け返信案を作成'));
+  assert.ok(prompt.includes('内部ログの金額・原価には一切触れないでください'));
+});
+
+test('buildAssistPrompt: audience=engineerはエンジニア向け返信案を指示し、内部ログの利用を許可する', () => {
+  const prompt = buildAssistPrompt({
+    project,
+    channels,
+    publicMessages,
+    internalMessages,
+    mode: 'draft_reply',
+    intent: '作業範囲を確認したい',
+    audience: 'engineer'
+  });
+  assert.ok(prompt.includes('エンジニア向け返信案を作成'));
+  assert.ok(prompt.includes('公開ログ・内部ログ両方の情報を使ってよい'));
+});
+
 test('buildAssistPrompt: メッセージが空でも壊れない', () => {
   const prompt = buildAssistPrompt({ project, channels: [], publicMessages: [], internalMessages: [], mode: 'status' });
   assert.ok(prompt.includes('該当する発言はありません'));

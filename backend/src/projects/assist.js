@@ -12,6 +12,7 @@
 
 import { callOpenRouter } from '../llm.js';
 import { maskSecrets } from './masker.js';
+import { guardCustomerReplySection } from './leak-guard.js';
 
 const SENDER_ROLE_LABEL_JA = {
   internal: '運営者',
@@ -39,7 +40,8 @@ const SYSTEM_INSTRUCTION = `あなたは受託開発の運営者を支える「�
 【推測】（推測である旨を明記した解釈）
 ■ 食い違い・確認すべき点（金額・範囲・納期。なければ「なし」と書く）
 ■ 次の一手の提案（内部確認が先か、顧客返信が先かを明示）
-■ 顧客向け返信案（依頼が返信案作成のときのみ。公開ログの情報だけで構成）`;
+■ 顧客向け返信案（宛先が顧客のときのみ。公開ログの情報だけで構成）
+■ エンジニア向け返信案（宛先がエンジニアのときのみ。内部ログの情報を使ってよい）`;
 
 const FEW_SHOT = `【例1: 金額の食い違い】
 公開ログ: [ココナラ|顧客] 「予算15万円くらいでお願いしたいです」
@@ -80,18 +82,27 @@ const MODE_INSTRUCTION = {
   draft_reply: '' // intentと組み合わせて動的に生成（buildAssistPrompt内）
 };
 
+const AUDIENCE_LABEL_JA = { customer: '顧客', engineer: 'エンジニア' };
+
 /**
- * @param {{ project: object, channels: object[], publicMessages: object[], internalMessages: object[], mode: 'status'|'reconcile'|'draft_reply', intent?: string }} params
+ * @param {{ project: object, channels: object[], publicMessages: object[], internalMessages: object[], mode: 'status'|'reconcile'|'draft_reply', intent?: string, audience?: 'customer'|'engineer' }} params
  * @returns {string} callOpenRouterへ渡す1本のuserPrompt
  */
-export function buildAssistPrompt({ project, channels, publicMessages, internalMessages, mode, intent }) {
+export function buildAssistPrompt({ project, channels, publicMessages, internalMessages, mode, intent, audience }) {
   const channelSummary = channels
     .map((c) => `- ${c.label || c.source}（${c.source}, ${c.counterpart_role}）: ${c.description_masked || '（概要なし）'}`)
     .join('\n');
 
+  const resolvedAudience = audience === 'engineer' ? 'engineer' : 'customer';
+  const audienceLabel = AUDIENCE_LABEL_JA[resolvedAudience];
+  const sourceConstraint =
+    resolvedAudience === 'customer'
+      ? '返信案は公開ログの情報だけで構成してください。内部ログの金額・原価には一切触れないでください。'
+      : '返信案は公開ログ・内部ログ両方の情報を使ってよいです。エンジニアへの確認依頼として、必要な内部の背景（顧客の予算感等）を共有して構いません。';
+
   const instruction =
     mode === 'draft_reply'
-      ? `次の意図で顧客向け返信案を作成してください。意図: ${intent || '（指定なし。状況に応じた自然な返信）'}。返信案は公開ログの情報だけで構成してください。`
+      ? `次の意図で${audienceLabel}向け返信案を作成してください。意図: ${intent || '（指定なし。状況に応じた自然な返信）'}。${sourceConstraint} 出力形式の「■ ${audienceLabel}向け返信案」セクションのみに返信案を書き、もう一方の宛先向けセクションは省略してください。`
       : MODE_INSTRUCTION[mode] || MODE_INSTRUCTION.status;
 
   return `${SYSTEM_INSTRUCTION}
@@ -116,20 +127,28 @@ ${instruction}`;
 
 /**
  * @param {object} env
- * @param {{ project: object, channels: object[], allMessages: object[], mode: string, intent?: string }} params
- * @returns {Promise<{ text: string, masked: boolean }>}
+ * @param {{ project: object, channels: object[], allMessages: object[], mode: string, intent?: string, audience?: 'customer'|'engineer' }} params
+ * @returns {Promise<{ text: string, masked: boolean, leakBlocked: boolean }>}
  */
-export async function runAssist(env, { project, channels, allMessages, mode, intent }) {
+export async function runAssist(env, { project, channels, allMessages, mode, intent, audience }) {
   const publicMessages = allMessages.filter((m) => m.visibility === 'public');
   const internalMessages = allMessages.filter((m) => m.visibility !== 'public');
-  const userPrompt = buildAssistPrompt({ project, channels, publicMessages, internalMessages, mode, intent });
+  const userPrompt = buildAssistPrompt({ project, channels, publicMessages, internalMessages, mode, intent, audience });
   const rawText = await callOpenRouter(env, {
     userPrompt,
     mode: 'project-assist',
     maxTokensOverride: 1500,
     temperatureOverride: 0.3
   });
+  // 出力側の第3防御層。プロンプト指示(ルール5)をLLMが守らなかった場合に備え、
+  // 顧客向け返信案に内部ログ限定の金額が混入していないかを機械的に検証する(2026-08-31実損対応)。
+  // エンジニア向け返信案は内部情報の共有が前提のため、このガードは顧客向けのときだけ適用する。
+  const resolvedAudience = audience === 'engineer' ? 'engineer' : 'customer';
+  const guarded =
+    resolvedAudience === 'customer'
+      ? guardCustomerReplySection(rawText, publicMessages, internalMessages)
+      : { text: rawText, leakBlocked: false };
   // 保険としての最終サニタイズ。主防御はvisibility設計であることに変わりはない。
-  const { text, masked } = maskSecrets(rawText);
-  return { text, masked };
+  const { text, masked } = maskSecrets(guarded.text);
+  return { text, masked, leakBlocked: guarded.leakBlocked };
 }

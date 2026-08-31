@@ -171,10 +171,14 @@ async function handleAssist(request, env, projectId) {
   if (!['status', 'reconcile', 'draft_reply'].includes(mode)) {
     return jsonResponse(request, env, { ok: false, reason: 'invalid_mode' }, 400);
   }
+  const audience = String(payload?.audience || 'customer').trim();
+  if (!['customer', 'engineer'].includes(audience)) {
+    return jsonResponse(request, env, { ok: false, reason: 'invalid_audience' }, 400);
+  }
   const channels = await listChannelLinks(env.PROJECT_DB, { projectId });
   const allMessages = await fetchProjectMessages(env.PROJECT_DB, { projectId, audience: 'owner', limit: 200 });
   try {
-    const result = await runAssist(env, { project, channels, allMessages, mode, intent: payload?.intent });
+    const result = await runAssist(env, { project, channels, allMessages, mode, intent: payload?.intent, audience });
     return jsonResponse(request, env, { ok: true, result });
   } catch (error) {
     if (error?.message === 'llm_not_configured') {

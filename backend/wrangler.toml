@@ -7,5 +7,10 @@ binding = "APP_KV"
 id = "a6abebe460104b2d9324d88f6ed40c2d"
 preview_id = "ea7961a933cf4bc5912c960a20d6d397"
 
+[[d1_databases]]
+binding = "PROJECT_DB"
+database_name = "henshin-hisho-projects"
+database_id = "5b7f2c60-0abd-4467-ad22-633d19e03c65"
+
 [triggers]
 crons = ["0 * * * *"]
