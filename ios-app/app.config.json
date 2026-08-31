@@ -1,0 +1,102 @@
+{
+  "identity": {
+    "displayName": "君斗りんくのAI返信秘書",
+    "displayNameEn": "AI Reply Secretary",
+    "shortName": "HenshinHisho",
+    "bundleId": "jp.besttrust.henshinhisho",
+    "iosScheme": "henshinhisho",
+    "productionDomain": "henshin-hisho.link",
+    "appUrl": "https://henshin-hisho.link/app/",
+    "webManifestUrl": "https://henshin-hisho.link/app/manifest.webmanifest"
+  },
+  "stores": {
+    "ascAppId": null,
+    "playAppId": null,
+    "playPackageName": "jp.besttrust.henshinhisho",
+    "appleTeamId": null,
+    "playDeveloperId": null,
+    "primaryCategory": "BUSINESS",
+    "ageRating": "FOUR_PLUS",
+    "contentRights": "DOES_NOT_USE_THIRD_PARTY_CONTENT",
+    "marketingVersion": "1.0.0",
+    "buildNumberOffset": 1
+  },
+  "brand": {
+    "primaryColor": "#1d4ed8",
+    "accentColor": "#0f766e",
+    "backgroundColor": "#f8fafc",
+    "iconSource": "store-assets/appstore/app-icon-1024.png",
+    "featureGraphicSource": null
+  },
+  "contact": {
+    "email": "info@best-trust.biz",
+    "phoneE164": null,
+    "firstName": "BestTrust",
+    "lastName": "Operations",
+    "supportUrl": "https://henshin-hisho.link/app/",
+    "privacyUrl": "https://henshin-hisho.link/privacy.html",
+    "termsUrl": "https://henshin-hisho.link/app/#/terms",
+    "marketingUrl": "https://henshin-hisho.link/",
+    "dataDeletionUrl": "https://henshin-hisho.link/app/#/account/delete"
+  },
+  "businessModel": {
+    "hasInAppPurchase": false,
+    "hasSubscription": false,
+    "hasPaidContent": false,
+    "summaryJa": "iOSアプリは、Web側で契約済みの事業者向けに提供する無料コンパニオンです。アプリ内には購入、外部購入誘導、有料解除機能を置きません。",
+    "summaryEn": "The iOS app is a free B2B companion for authorized business users of the web service. It contains no purchasing, purchase links, paywalls, or paid unlocks."
+  },
+  "ownership": {
+    "organization": "株式会社ベストトラスト",
+    "country": "JP",
+    "githubOrg": "best-trust",
+    "githubRepo": "reply-copilot-openrouter-v2",
+    "vercelTeamSlug": null,
+    "vercelProjectName": null
+  },
+  "nativeFeatures": [
+    "ios_push_notifications",
+    "ios_app_badge",
+    "native_share"
+  ],
+  "backend": {
+    "apiBase": "https://henshin-hisho-app.info-a40.workers.dev",
+    "accountEndpoint": "GET /account",
+    "deleteEndpoint": "POST /account/delete",
+    "pushSubscribeEndpoint": "POST /push/subscribe",
+    "gmailFeatureFlagField": "features.gmailConnectEnabled",
+    "gmailFeatureDefault": false
+  },
+  "ios": {
+    "shell": "capacitor",
+    "webDir": "www",
+    "orientation": "portrait",
+    "minimumOsVersion": "15.0",
+    "allowNavigation": [
+      "henshin-hisho.link",
+      "*.henshin-hisho.link",
+      "henshin-hisho-app.info-a40.workers.dev",
+      "appleid.apple.com",
+      "*.apple.com"
+    ],
+    "nativeAuthAllowlist": [
+      "/sign-in",
+      "/privacy",
+      "/terms",
+      "/support",
+      "/account/delete"
+    ]
+  },
+  "review": {
+    "doesNotSendAutomatically": true,
+    "gmailApiUsedByClient": false,
+    "gmailOAuthInIosApp": false,
+    "googleLoginInIosApp": false,
+    "signInWithAppleRequired": false,
+    "iapExemption": "3.1.3(f)",
+    "loginCarveOut": "4.8 carve-out #1",
+    "billingTraceInIosBuild": false,
+    "demoAccountEmail": "appreview@best-trust.biz",
+    "demoAccountPasswordSource": "IOS_REVIEW_DEMO_PASSWORD / ASC Sign-In Information"
+  }
+}

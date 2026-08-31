@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>AI返信秘書</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1d4ed8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://henshin-hisho-app.info-a40.workers.dev; img-src 'self' data:; style-src 'self'; script-src 'self'" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <strong>AI返信秘書</strong>
+      <span>承認コンパニオン</span>
+    </div>
+    <button id="refreshButton" class="icon-button" type="button" aria-label="更新">更新</button>
+  </header>
+
+  <main id="appRoot" class="app-root" hidden>
+    <section id="signInView" class="view">
+      <h1>事業者アカウントでログイン</h1>
+      <form id="signInForm" class="panel form-stack">
+        <label>メールアドレス
+          <input id="emailInput" type="email" autocomplete="email" required />
+        </label>
+        <label>パスワード
+          <input id="passwordInput" type="password" autocomplete="current-password" minlength="8" required />
+        </label>
+        <button type="submit">ログイン</button>
+        <p id="authStatus" class="status" aria-live="polite"></p>
+      </form>
+      <div class="legal-links" aria-label="法務リンク">
+        <a href="#/privacy">Privacy</a>
+        <a href="#/terms">Terms</a>
+        <a href="#/support">Support</a>
+        <a href="#/account/delete">Account deletion</a>
+      </div>
+    </section>
+
+    <section id="inboxView" class="view" hidden>
+      <div class="summary">
+        <div>
+          <h1>今日の確認</h1>
+          <p id="accountStatus" class="status">読み込み中です。</p>
+        </div>
+        <span id="badgeCount" class="count-pill">0</span>
+      </div>
+      <div id="shelfList" class="shelf-list"></div>
+      <article id="itemDetail" class="panel detail-panel">
+        <p class="empty">項目を選択してください。</p>
+      </article>
+    </section>
+
+    <section id="settingsView" class="view" hidden>
+      <h1>設定</h1>
+      <section class="panel form-stack">
+        <h2>通知</h2>
+        <p class="status">朝の確認通知と件数バッジをこの端末で受け取ります。</p>
+        <button id="enableNotificationsButton" type="button">通知を有効にする</button>
+        <p id="pushStatus" class="status" aria-live="polite"></p>
+      </section>
+      <section class="panel form-stack">
+        <h2>アカウント</h2>
+        <button id="goDeleteButton" class="danger" type="button">アカウントを削除</button>
+        <button id="signOutButton" class="secondary" type="button">ログアウト</button>
+      </section>
+    </section>
+
+    <section id="deleteView" class="view" hidden>
+      <h1>アカウント削除</h1>
+      <section class="panel form-stack">
+        <p>保存済みの受信箱、設定、セッションを削除します。この操作は取り消せません。</p>
+        <button id="deleteAccountButton" class="danger" type="button">削除を実行</button>
+        <button id="cancelDeleteButton" class="secondary" type="button">戻る</button>
+        <p id="deleteStatus" class="status" aria-live="polite"></p>
+      </section>
+    </section>
+
+    <section id="legalView" class="view" hidden>
+      <h1 id="legalTitle">Legal</h1>
+      <section class="panel form-stack">
+        <p id="legalText"></p>
+        <a id="legalExternalLink" class="button-link" href="https://henshin-hisho.link/privacy-policy.html">詳細を開く</a>
+      </section>
+    </section>
+  </main>
+
+  <section id="fallbackView" class="fallback" hidden>
+    <h1>接続できませんでした</h1>
+    <p>通信状態を確認してから再試行してください。</p>
+    <button id="retryButton" type="button">再試行</button>
+  </section>
+
+  <nav id="tabbar" class="tabbar" aria-label="ネイティブタブバー" hidden>
+    <button class="tab-button" type="button" data-route="/inbox">受信箱</button>
+    <button class="tab-button" type="button" data-route="/settings">設定</button>
+  </nav>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

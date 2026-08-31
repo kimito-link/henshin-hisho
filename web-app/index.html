@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>AI返信秘書 App</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="AI返信秘書のWeb版。貼り付けたメールや各チャネルの連絡を、返信判断と下書きまで整理します。" />
+<meta name="theme-color" content="#1d4ed8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://henshin-hisho-app.info-a40.workers.dev" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="../images/link-smile.png" alt="" />
+      <div>
+        <strong>AI返信秘書</strong>
+        <span>マルチチャネル受信箱</span>
+      </div>
+    </div>
+    <nav class="top-nav" aria-label="主要メニュー">
+      <button class="nav-button is-active" type="button" data-view="inboxView">受信箱</button>
+      <button class="nav-button" type="button" data-view="settingsView">設定</button>
+    </nav>
+  </header>
+
+  <main class="app-shell">
+    <section id="authView" class="auth-panel">
+      <div>
+        <h1>貼り付けるだけで、返すべき順に並べます</h1>
+        <p>Gmail接続の審査前でも、本文貼り付けで判断・高リスク確認・下書き生成まで使えます。</p>
+      </div>
+      <form id="authForm" class="auth-form">
+        <label for="authEmail">メールアドレス</label>
+        <input id="authEmail" type="email" autocomplete="email" required />
+        <label for="authPassword">パスワード</label>
+        <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required />
+        <div class="auth-actions">
+          <button type="submit" data-auth-mode="login">ログイン</button>
+          <button type="submit" class="secondary" data-auth-mode="signup">サインアップ</button>
+        </div>
+        <p id="authStatus" class="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="appView" class="is-hidden">
+      <section id="inboxView" class="view">
+        <div class="summary-row">
+          <div>
+            <h1>受信箱</h1>
+            <p id="accountStatus" class="status">アカウント状態を確認しています。</p>
+          </div>
+          <div class="character-strip" aria-hidden="true">
+            <img src="../images/link.png" alt="" />
+            <img src="../images/tanu-nee.png" alt="" />
+            <img src="../images/konta.png" alt="" />
+          </div>
+        </div>
+
+        <section class="paste-panel" aria-labelledby="pasteTitle">
+          <h2 id="pasteTitle">貼り付け入力</h2>
+          <form id="pasteForm">
+            <div class="field-grid">
+              <label>差出人名<input id="pasteFromName" type="text" placeholder="山田さん" /></label>
+              <label>差出人メール<input id="pasteFromEmail" type="email" placeholder="yamada@example.com" /></label>
+            </div>
+            <label>件名<input id="pasteSubject" type="text" placeholder="契約内容の確認について" /></label>
+            <label>本文<textarea id="pasteBody" required placeholder="相手からのメール本文を貼り付けてください"></textarea></label>
+            <button type="submit">判定して受信箱に入れる</button>
+            <p id="pasteStatus" class="status" aria-live="polite"></p>
+          </form>
+        </section>
+
+        <section class="inbox-layout">
+          <div id="shelfList" class="shelf-list" aria-label="分類棚"></div>
+          <article id="itemDetail" class="detail-panel">
+            <p class="empty">左の棚からアイテムを選択してください。</p>
+          </article>
+        </section>
+      </section>
+
+      <section id="settingsView" class="view is-hidden">
+        <h1>設定</h1>
+        <div id="billingPanel" class="settings-panel"></div>
+        <section class="settings-panel">
+          <h2>朝のダイジェスト</h2>
+          <form id="digestSettingsForm" class="settings-form">
+            <label><input id="digestEnabled" type="checkbox" /> メールで通知する</label>
+            <label>配信時刻<input id="digestHour" type="number" min="0" max="23" step="1" /></label>
+            <label>タイムゾーン<input id="digestTimezone" type="text" placeholder="Asia/Tokyo" /></label>
+            <button type="submit">ダイジェスト設定を保存</button>
+          </form>
+          <button id="pushSubscribeButton" class="secondary is-hidden" type="button">プッシュ通知を有効にする</button>
+          <p id="digestSettingsStatus" class="status" aria-live="polite"></p>
+        </section>
+        <section class="settings-panel">
+          <h2>会社の方針</h2>
+          <p class="status">値引きや最低受注額などの方針を一度設定しておくと、下書き生成が必ずその方針に従います。</p>
+          <form id="policySettingsForm" class="settings-form">
+            <label>業種テンプレ（選ぶと下の項目に既定値を仮入力）
+              <select id="policyIndustryTemplate">
+                <option value="">選択しない</option>
+                <option value="seisaku">制作・受託</option>
+                <option value="butsuhan">物販・卸</option>
+                <option value="service">サービス業</option>
+              </select>
+            </label>
+            <label>値引き上限（%・任意）<input id="policyDiscountCeiling" type="number" min="0" max="100" step="1" placeholder="例: 20" /></label>
+            <label>最低受注額（円・任意）<input id="policyMinOrderValue" type="number" min="0" step="1000" placeholder="例: 50000" /></label>
+            <label>まとめ売り方針
+              <select id="policyBundlePolicy">
+                <option value="none">指定なし</option>
+                <option value="encourage">積極的に提案する</option>
+                <option value="case_by_case">状況に応じて提案する</option>
+              </select>
+            </label>
+            <label>標準トーン
+              <select id="policyDefaultTone">
+                <option value="polite">丁寧に</option>
+                <option value="firm">はっきり強めに</option>
+                <option value="calm">冷静に</option>
+                <option value="casual">いつもの砕けた調子で</option>
+              </select>
+            </label>
+            <label>補足方針（任意）<textarea id="policyFreeformNote" maxlength="1000" placeholder="例: 長期のお客様は条件を緩めてよい"></textarea></label>
+            <button type="submit">方針を保存</button>
+          </form>
+          <p id="policySettingsStatus" class="status" aria-live="polite"></p>
+        </section>
+        <section class="settings-panel">
+          <h2>週次レポート</h2>
+          <form id="reportSettingsForm" class="settings-form">
+            <label><input id="weeklyReportEnabled" type="checkbox" /> 週次レポートを受け取る</label>
+            <label>客単価（任意）<input id="avgCaseValue" type="number" min="0" step="1000" placeholder="例: 50000" /></label>
+            <button type="submit">週次レポート設定を保存</button>
+          </form>
+          <button id="weeklyReportPreviewButton" class="secondary" type="button">今週のレポートを見る</button>
+          <pre id="weeklyReportPreview" class="report-preview"></pre>
+          <p id="reportSettingsStatus" class="status" aria-live="polite"></p>
+        </section>
+        <section class="settings-panel">
+          <h2>アカウント</h2>
+          <p class="status">削除すると、このWeb版のユーザーデータと保存済み受信箱が削除されます。</p>
+          <button id="deleteAccountButton" class="danger" type="button">アカウントを削除</button>
+          <button id="logoutButton" class="secondary" type="button">ログアウト</button>
+          <p id="settingsStatus" class="status" aria-live="polite"></p>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "name": "henshin-hisho-ios-shell",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run lint:pre-submission",
+    "lint:pre-submission": "node scripts/lint-pre-submission.mjs",
+    "node:check": "node --check www/app.js && node --check scripts/lint-pre-submission.mjs && node --check scripts/verify-reviewer-account.mjs && node --check scripts/appstore-submit.mjs && node --check scripts/capture-appstore-screenshots.mjs && node --check scripts/frame-appstore-screenshots.mjs && node --check scripts/generate-release-notes.mjs && node --check scripts/generate-capacitor-splash.mjs",
+    "reviewer:verify": "node scripts/verify-reviewer-account.mjs",
+    "reviewer:provision": "node scripts/verify-reviewer-account.mjs --provision",
+    "appstore:screenshots": "node scripts/capture-appstore-screenshots.mjs",
+    "appstore:submit": "node scripts/appstore-submit.mjs",
+    "release-notes": "node scripts/generate-release-notes.mjs --write",
+    "cap:splash": "node scripts/generate-capacitor-splash.mjs",
+    "cap:sync": "npx cap sync ios"
+  },
+  "dependencies": {
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/push-notifications": "^8.0.0",
+    "@capacitor/share": "^8.0.0",
+    "@capawesome/capacitor-badge": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@playwright/test": "^1.57.0"
+  }
+}

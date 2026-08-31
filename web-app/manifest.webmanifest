@@ -1,0 +1,26 @@
+{
+  "name": "AI返信秘書",
+  "short_name": "返信秘書",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#f8fafc",
+  "theme_color": "#1d4ed8",
+  "share_target": {
+    "action": "./index.html",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "icons": [
+    {
+      "src": "../images/favi-link-chat.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    }
+  ]
+}

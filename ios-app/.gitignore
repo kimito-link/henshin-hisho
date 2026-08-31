@@ -1,0 +1,12 @@
+node_modules/
+ios/
+dist/
+build/
+assets/
+.splash-default-hashes.json
+ios-screenshots/
+*.ipa
+*.xcarchive
+.env
+.env.*
+!.env.example

@@ -1,0 +1,11 @@
+name = "henshin-hisho-app"
+main = "src/index.js"
+compatibility_date = "2026-07-06"
+
+[[kv_namespaces]]
+binding = "APP_KV"
+id = "a6abebe460104b2d9324d88f6ed40c2d"
+preview_id = "ea7961a933cf4bc5912c960a20d6d397"
+
+[triggers]
+crons = ["0 * * * *"]

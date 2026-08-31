@@ -1,0 +1,14 @@
+SESSION_SECRET=replace_with_long_random_secret
+RESEND_API_KEY=re_xxx_replace_me
+MAIL_FROM=AI返信秘書 <no-reply@henshin-hisho.link>
+MAIL_REPLY_TO=info@best-trust.biz
+APP_BASE_URL=https://henshin-hisho.link/app/
+APP_ALLOWED_ORIGIN=https://henshin-hisho.link
+OPENROUTER_API_KEY=sk-or-v1_xxx_replace_me
+APP_MODEL=google/gemma-3-12b-it
+LINE_CHANNEL_SECRET=line_channel_secret_replace_me
+LINE_CHANNEL_ACCESS_TOKEN=line_channel_access_token_replace_me
+LINE_DEFAULT_USER_ID=
+GMAIL_CONNECT_ENABLED=false
+LICENSE_VERIFY_URL=https://gmail-secretary-license.info-a40.workers.dev/verify
+CHATWORK_API_TOKEN=chatwork_api_token_replace_me

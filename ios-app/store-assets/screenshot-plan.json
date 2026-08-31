@@ -1,0 +1,31 @@
+{
+  "signInPath": "/app/",
+  "dashboardUrlRegex": "/app/",
+  "publicPages": [],
+  "authTabs": [
+    {
+      "slot": 1,
+      "selector": ".nav-button[data-view=\"inboxView\"]",
+      "label": "inbox",
+      "title": "朝の確認を棚で整理",
+      "subtitle": "要返信と高リスクをスマホで確認できます。"
+    },
+    {
+      "slot": 2,
+      "selector": ".nav-button[data-view=\"settingsView\"]",
+      "label": "settings",
+      "title": "通知とレポートを管理",
+      "subtitle": "日々の確認を続けるための設定をまとめています。"
+    }
+  ],
+  "framedCaptions": {
+    "1": {
+      "headline": "朝の確認を{棚で整理}",
+      "sub": "要返信と高リスクをスマホで確認"
+    },
+    "2": {
+      "headline": "通知とレポートを{管理}",
+      "sub": "承認前提の運用を継続"
+    }
+  }
+}

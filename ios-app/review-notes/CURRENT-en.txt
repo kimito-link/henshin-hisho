@@ -1,0 +1,40 @@
+Hello App Review team,
+
+This build is a free B2B companion app for AI Reply Secretary, operated by Best Trust Co., Ltd. It is a login-gated operational dashboard for authorized business users.
+
+Demo access:
+- Email: appreview@best-trust.biz
+- Password: Rv1Hsz_-EROpjE9!  (also in App Review Sign-In Information; this account is live and was re-verified against our backend immediately before this resubmission)
+- 2FA: disabled. The sign-in screen is the very first screen shown on launch. It is our own email + password form (not a third-party or social login).
+- When entering the password, please include the trailing "!" and add no surrounding spaces.
+- Steps: launch app -> enter the email and password above -> tap ログイン (Log in) -> the Inbox (受信箱) opens with seeded review data where you can review items and AI-assisted reply drafts. Settings (設定) manages notifications and account deletion.
+
+Guideline 3.1.3(f):
+"Free apps acting as a stand-alone companion to a paid web based tool ... do not need to use in-app purchase, provided there is no purchasing inside the app, or calls to action for purchase outside of the app."
+
+The iOS app has no in-app purchase, no purchase page, no paywall, no external purchase call to action, and no paid unlock. The iOS binary uses a local Capacitor webDir that excludes the web billing route entirely.
+
+Guideline 4.8 carve-out #1:
+"Your app exclusively uses your company's own account setup and sign-in systems."
+
+The iOS app exposes only our own email/password account system. It does not show Google login, social login, or Gmail OAuth. Gmail connection is completed on the web service, outside the iOS app. Sign in with Apple is therefore not required under carve-out #1.
+
+Business model answers:
+1. Users of paid services: business customers of the web service outside the iOS app; the iOS app itself has no paid service.
+2. Where purchase occurs: nowhere in or from the iOS app. Commercial contracts are handled off-platform.
+3. Previously purchased services accessible in app: operational inbox review for authorized business users.
+4. Paid content or features unlocked without IAP: none.
+5. Enterprise services sold to consumers or families: no. They are B2B services.
+6. Account creation and fees: accounts are provisioned for authorized business users. There is no fee inside the app.
+7. Individual customers paying for content: no. The app is a free companion.
+
+Native functionality:
+- Push notification registration.
+- App icon badge count for pending items.
+- Native share sheet for selected inbox items.
+
+Account deletion:
+Settings -> Account -> Delete account opens an in-app deletion screen and calls POST /account/delete after confirmation.
+
+Safety:
+The app never sends email automatically. High-risk items require explicit human confirmation.

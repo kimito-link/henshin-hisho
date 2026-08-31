@@ -1,0 +1,10 @@
+{
+  "name": "AI返信秘書",
+  "short_name": "返信秘書",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#1d4ed8",
+  "icons": []
+}

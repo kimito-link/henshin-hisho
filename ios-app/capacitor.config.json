@@ -1,0 +1,32 @@
+{
+  "appId": "jp.besttrust.henshinhisho",
+  "appName": "君斗りんくのAI返信秘書",
+  "webDir": "www",
+  "backgroundColor": "#0A0A0F",
+  "ios": {
+    "contentInset": "always",
+    "scheme": "henshinhisho",
+    "limitsNavigationsToAppBoundDomains": false,
+    "backgroundColor": "#0A0A0F"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 800,
+      "launchFadeOutDuration": 180,
+      "backgroundColor": "#0A0A0F",
+      "showSpinner": false,
+      "splashFullScreen": true
+    }
+  },
+  "server": {
+    "cleartext": false,
+    "allowNavigation": [
+      "henshin-hisho.link",
+      "*.henshin-hisho.link",
+      "henshin-hisho-app.info-a40.workers.dev",
+      "appleid.apple.com",
+      "*.apple.com"
+    ]
+  }
+}
