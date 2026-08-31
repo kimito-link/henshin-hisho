@@ -263,6 +263,14 @@ input:focus, textarea:focus {
   background: var(--warn-soft);
   color: var(--warn);
 }
+.badge.internal {
+  background: #f1f5f9;
+  color: var(--muted);
+}
+.badge.public {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
 .detail-grid {
   display: grid;
   gap: 12px;
@@ -291,6 +299,34 @@ input:focus, textarea:focus {
   align-items: center;
   gap: 8px;
   font-weight: 700;
+}
+.leak-warning {
+  background: var(--warn-soft);
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 12px;
+  font-weight: 700;
+  color: var(--warn);
+  margin-bottom: 12px;
+}
+.message-card {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+.message-card .message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.message-card .message-body {
+  white-space: pre-wrap;
+  font-size: 13px;
 }
 .risk-confirm input { width: auto; }
 .tone-row {

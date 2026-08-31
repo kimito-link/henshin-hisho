@@ -16,7 +16,11 @@ var state = {
   account: null,
   items: [],
   buckets: {},
-  selectedItemId: ''
+  selectedItemId: '',
+  projects: [],
+  selectedProjectId: '',
+  projectDetail: null,
+  staff: []
 };
 
 var authView = document.getElementById('authView');
@@ -34,6 +38,36 @@ var reportSettingsStatus = document.getElementById('reportSettingsStatus');
 var policySettingsStatus = document.getElementById('policySettingsStatus');
 var billingPanel = document.getElementById('billingPanel');
 var billingModulePromise = null;
+
+var projectsListPane = document.getElementById('projectsListPane');
+var projectDetailPane = document.getElementById('projectDetailPane');
+var newProjectForm = document.getElementById('newProjectForm');
+var newProjectStatus = document.getElementById('newProjectStatus');
+var projectList = document.getElementById('projectList');
+var backToProjectsButton = document.getElementById('backToProjectsButton');
+var projectDetailName = document.getElementById('projectDetailName');
+var projectDetailSummary = document.getElementById('projectDetailSummary');
+var channelList = document.getElementById('channelList');
+var newChannelForm = document.getElementById('newChannelForm');
+var newChannelStatus = document.getElementById('newChannelStatus');
+var syncChatworkButton = document.getElementById('syncChatworkButton');
+var syncStatus = document.getElementById('syncStatus');
+var manualChannelSelect = document.getElementById('manualChannelSelect');
+var manualMessageForm = document.getElementById('manualMessageForm');
+var manualMessageStatus = document.getElementById('manualMessageStatus');
+var messageTimeline = document.getElementById('messageTimeline');
+var assistForm = document.getElementById('assistForm');
+var assistMode = document.getElementById('assistMode');
+var assistDraftFields = document.getElementById('assistDraftFields');
+var assistStatus = document.getElementById('assistStatus');
+var assistResult = document.getElementById('assistResult');
+var staffForm = document.getElementById('staffForm');
+var staffStatus = document.getElementById('staffStatus');
+var staffList = document.getElementById('staffList');
+
+var COUNTERPART_ROLE_LABEL_JA = { customer: '顧客', engineer: 'エンジニア', mixed: '混在' };
+var SENDER_ROLE_LABEL_JA = { internal: '運営者', customer: '顧客', engineer: 'エンジニア', unknown: '不明' };
+var STAFF_ROLE_LABEL_JA = { operator: '運営者', engineer: 'エンジニア' };
 
 function capacitorBridge() {
   return window.Capacitor || null;
@@ -397,6 +431,237 @@ function renderDraftControls(item) {
   return form;
 }
 
+// ---- 案件統合AI秘書（案件タブ） ----
+
+async function refreshProjects() {
+  var data = await api('/projects');
+  state.projects = data.projects || [];
+  renderProjectList();
+}
+
+function renderProjectList() {
+  projectList.innerHTML = '';
+  if (!state.projects.length) {
+    var empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'まだ案件がありません。上のフォームから作成してください。';
+    projectList.appendChild(empty);
+    return;
+  }
+  state.projects.forEach(function (project) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'item-button';
+    button.innerHTML = '<span></span><small></small>';
+    button.children[0].textContent = project.name;
+    button.children[1].textContent = (project.status || 'active') + (project.summary ? ' ・ ' + project.summary : '');
+    button.addEventListener('click', function () {
+      openProjectDetail(project.id);
+    });
+    projectList.appendChild(button);
+  });
+}
+
+async function openProjectDetail(projectId) {
+  state.selectedProjectId = projectId;
+  projectsListPane.classList.add('is-hidden');
+  projectDetailPane.classList.remove('is-hidden');
+  try {
+    await refreshProjectDetail();
+  } catch {
+    setText(newProjectStatus, '案件を取得できませんでした。');
+  }
+}
+
+function closeProjectDetail() {
+  state.selectedProjectId = '';
+  state.projectDetail = null;
+  projectDetailPane.classList.add('is-hidden');
+  projectsListPane.classList.remove('is-hidden');
+  refreshProjects().catch(function () {});
+}
+
+async function refreshProjectDetail() {
+  var data = await api('/projects/' + encodeURIComponent(state.selectedProjectId));
+  state.projectDetail = data;
+  renderProjectDetailHeader();
+  renderChannelList();
+  renderManualChannelSelect();
+  renderMessageTimeline();
+}
+
+function renderProjectDetailHeader() {
+  var project = state.projectDetail.project;
+  setText(projectDetailName, project.name);
+  setText(projectDetailSummary, (project.status || 'active') + (project.summary ? ' ・ ' + project.summary : ''));
+}
+
+function renderChannelList() {
+  channelList.innerHTML = '';
+  var channels = state.projectDetail.channels || [];
+  if (!channels.length) {
+    var empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'チャネルがまだ紐付けられていません。';
+    channelList.appendChild(empty);
+    return;
+  }
+  channels.forEach(function (channel) {
+    var row = document.createElement('div');
+    row.className = 'message-card';
+    var meta = document.createElement('div');
+    meta.className = 'message-meta';
+    var left = document.createElement('span');
+    left.textContent = (channel.label || channel.source) + '（' + channel.source + '）';
+    var right = document.createElement('span');
+    right.textContent = COUNTERPART_ROLE_LABEL_JA[channel.counterpart_role] || channel.counterpart_role;
+    meta.append(left, right);
+    row.appendChild(meta);
+    channelList.appendChild(row);
+  });
+}
+
+function renderManualChannelSelect() {
+  manualChannelSelect.innerHTML = '';
+  var channels = state.projectDetail.channels || [];
+  channels.forEach(function (channel) {
+    var option = document.createElement('option');
+    option.value = channel.id;
+    option.textContent = channel.label || channel.source;
+    manualChannelSelect.appendChild(option);
+  });
+}
+
+function visibilityBadgeClass(visibility) {
+  return visibility === 'public' ? 'badge public' : 'badge internal';
+}
+
+function visibilityBadgeLabel(visibility) {
+  return visibility === 'public' ? '公開' : '内部';
+}
+
+async function patchMessageVisibility(messageId, visibility) {
+  await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/messages/' + encodeURIComponent(messageId) + '/visibility', {
+    method: 'PATCH',
+    body: { visibility: visibility }
+  });
+  var message = (state.projectDetail.messages || []).find(function (m) { return m.id === messageId; });
+  if (message) message.visibility = visibility;
+  renderMessageTimeline();
+}
+
+function renderMessageTimeline() {
+  messageTimeline.innerHTML = '';
+  var messages = state.projectDetail.messages || [];
+  if (!messages.length) {
+    var empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'メッセージがまだありません。';
+    messageTimeline.appendChild(empty);
+    return;
+  }
+  messages.forEach(function (message) {
+    var card = document.createElement('div');
+    card.className = 'message-card';
+
+    var meta = document.createElement('div');
+    meta.className = 'message-meta';
+    var left = document.createElement('span');
+    left.textContent = (SENDER_ROLE_LABEL_JA[message.sender_role] || message.sender_role) + ' ' + (message.sender_display_name || '') + ' ・ ' + (message.channel_label || message.channel_source);
+    var right = document.createElement('span');
+    right.textContent = new Date(message.sent_at).toLocaleString('ja-JP');
+    meta.append(left, right);
+
+    var badgeRow = document.createElement('div');
+    badgeRow.className = 'message-meta';
+    var badge = document.createElement('span');
+    badge.className = visibilityBadgeClass(message.visibility);
+    badge.textContent = visibilityBadgeLabel(message.visibility);
+    badgeRow.appendChild(badge);
+    if (message.masked) {
+      var maskedNote = document.createElement('small');
+      maskedNote.textContent = 'マスク済み';
+      badgeRow.appendChild(maskedNote);
+    }
+    var publicButton = document.createElement('button');
+    publicButton.type = 'button';
+    publicButton.className = 'secondary';
+    publicButton.textContent = '公開にする';
+    publicButton.disabled = message.visibility === 'public';
+    publicButton.addEventListener('click', function () {
+      patchMessageVisibility(message.id, 'public').catch(function () {});
+    });
+    var internalButton = document.createElement('button');
+    internalButton.type = 'button';
+    internalButton.className = 'secondary';
+    internalButton.textContent = '内部にする';
+    internalButton.disabled = message.visibility !== 'public';
+    internalButton.addEventListener('click', function () {
+      patchMessageVisibility(message.id, 'internal').catch(function () {});
+    });
+    badgeRow.append(publicButton, internalButton);
+
+    var body = document.createElement('div');
+    body.className = 'message-body';
+    body.textContent = message.body;
+
+    card.append(meta, badgeRow, body);
+    messageTimeline.appendChild(card);
+  });
+}
+
+function renderAssistResult(result) {
+  assistResult.innerHTML = '';
+  if (result.leakBlocked) {
+    var warning = document.createElement('div');
+    warning.className = 'leak-warning';
+    warning.textContent = '内部情報の混入を検知し、該当部分を差し替えました。';
+    assistResult.appendChild(warning);
+  }
+  var output = document.createElement('div');
+  output.className = 'draft-output';
+  output.textContent = result.text;
+  assistResult.appendChild(output);
+  if (result.masked) {
+    var maskedNote = document.createElement('p');
+    maskedNote.className = 'status';
+    maskedNote.textContent = '一部の秘匿情報をマスクしました。';
+    assistResult.appendChild(maskedNote);
+  }
+}
+
+// ---- 担当者登録（設定タブ内） ----
+
+async function refreshStaff() {
+  var data = await api('/projects/staff');
+  state.staff = data.staff || [];
+  renderStaffList();
+}
+
+function renderStaffList() {
+  staffList.innerHTML = '';
+  if (!state.staff.length) {
+    var empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'まだ登録がありません。';
+    staffList.appendChild(empty);
+    return;
+  }
+  state.staff.forEach(function (person) {
+    var row = document.createElement('div');
+    row.className = 'message-card';
+    var meta = document.createElement('div');
+    meta.className = 'message-meta';
+    var left = document.createElement('span');
+    left.textContent = (person.display_name || person.source_account_id) + ' ・ ' + person.source;
+    var right = document.createElement('span');
+    right.textContent = STAFF_ROLE_LABEL_JA[person.staff_role] || person.staff_role;
+    meta.append(left, right);
+    row.appendChild(meta);
+    staffList.appendChild(row);
+  });
+}
+
 authForm.addEventListener('submit', async function (event) {
   event.preventDefault();
   var mode = event.submitter?.dataset.authMode || 'login';
@@ -603,6 +868,136 @@ document.getElementById('weeklyReportPreviewButton').addEventListener('click', a
   } catch {
     setText(reportSettingsStatus, 'レポートを取得できませんでした。');
   }
+});
+
+newProjectForm.addEventListener('submit', async function (event) {
+  event.preventDefault();
+  setText(newProjectStatus, '作成しています。');
+  try {
+    await api('/projects', {
+      method: 'POST',
+      body: {
+        name: document.getElementById('newProjectName').value,
+        summary: document.getElementById('newProjectSummary').value
+      }
+    });
+    newProjectForm.reset();
+    setText(newProjectStatus, '作成しました。');
+    await refreshProjects();
+  } catch {
+    setText(newProjectStatus, '作成できませんでした。');
+  }
+});
+
+backToProjectsButton.addEventListener('click', function () {
+  closeProjectDetail();
+});
+
+newChannelForm.addEventListener('submit', async function (event) {
+  event.preventDefault();
+  setText(newChannelStatus, '追加しています。');
+  try {
+    await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/channels', {
+      method: 'POST',
+      body: {
+        source: document.getElementById('channelSource').value,
+        externalConversationId: document.getElementById('channelExternalId').value,
+        counterpartRole: document.getElementById('channelCounterpartRole').value,
+        label: document.getElementById('channelLabel').value
+      }
+    });
+    newChannelForm.reset();
+    setText(newChannelStatus, '追加しました。');
+    await refreshProjectDetail();
+  } catch {
+    setText(newChannelStatus, '追加できませんでした。');
+  }
+});
+
+syncChatworkButton.addEventListener('click', async function () {
+  setText(syncStatus, '同期しています。');
+  try {
+    var data = await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/sync', { method: 'POST', body: {} });
+    var count = (data.synced || []).length;
+    setText(syncStatus, count + '件のチャネルを同期しました。');
+    await refreshProjectDetail();
+  } catch {
+    setText(syncStatus, '同期できませんでした。');
+  }
+});
+
+manualMessageForm.addEventListener('submit', async function (event) {
+  event.preventDefault();
+  setText(manualMessageStatus, '投入しています。');
+  try {
+    var data = await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/messages/manual', {
+      method: 'POST',
+      body: {
+        channelLinkId: manualChannelSelect.value,
+        senderRole: document.getElementById('manualSenderRole').value,
+        senderDisplayName: document.getElementById('manualSenderName').value,
+        body: document.getElementById('manualMessageBody').value
+      }
+    });
+    manualMessageForm.reset();
+    setText(manualMessageStatus, data.message?.masked ? '投入しました（秘匿情報をマスクしました）。' : '投入しました。');
+    await refreshProjectDetail();
+  } catch {
+    setText(manualMessageStatus, '投入できませんでした。');
+  }
+});
+
+assistMode.addEventListener('change', function () {
+  assistDraftFields.classList.toggle('is-hidden', assistMode.value !== 'draft_reply');
+});
+
+assistForm.addEventListener('submit', async function (event) {
+  event.preventDefault();
+  setText(assistStatus, 'AIに聞いています。');
+  assistResult.innerHTML = '';
+  var body = { mode: assistMode.value };
+  if (assistMode.value === 'draft_reply') {
+    body.intent = document.getElementById('assistIntent').value;
+    body.audience = document.getElementById('assistAudience').value;
+  }
+  try {
+    var data = await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/assist', { method: 'POST', body: body });
+    setText(assistStatus, '');
+    renderAssistResult(data.result);
+  } catch (error) {
+    setText(assistStatus, error.body?.reason === 'llm_not_configured'
+      ? 'AI機能が未設定です。'
+      : 'AIに聞けませんでした。');
+  }
+});
+
+staffForm.addEventListener('submit', async function (event) {
+  event.preventDefault();
+  setText(staffStatus, '登録しています。');
+  try {
+    await api('/projects/staff', {
+      method: 'POST',
+      body: {
+        source: document.getElementById('staffSource').value,
+        sourceAccountId: document.getElementById('staffAccountId').value,
+        staffRole: document.getElementById('staffRole').value,
+        displayName: document.getElementById('staffDisplayName').value
+      }
+    });
+    staffForm.reset();
+    setText(staffStatus, '登録しました。');
+    await refreshStaff();
+  } catch {
+    setText(staffStatus, '登録できませんでした。');
+  }
+});
+
+document.querySelector('[data-view="projectsView"]').addEventListener('click', function () {
+  if (state.token && !state.projects.length) refreshProjects().catch(function () {});
+});
+
+document.querySelector('[data-view="settingsView"]').addEventListener('click', function () {
+  if (state.token && !state.staff.length) refreshStaff().catch(function () {});
 });
 
 if ('serviceWorker' in navigator) {

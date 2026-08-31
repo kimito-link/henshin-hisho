@@ -21,6 +21,7 @@
     </div>
     <nav class="top-nav" aria-label="主要メニュー">
       <button class="nav-button is-active" type="button" data-view="inboxView">受信箱</button>
+      <button class="nav-button" type="button" data-view="projectsView">案件</button>
       <button class="nav-button" type="button" data-view="settingsView">設定</button>
     </nav>
   </header>
@@ -80,9 +81,145 @@
         </section>
       </section>
 
+      <section id="projectsView" class="view is-hidden">
+        <div id="projectsListPane">
+          <div class="summary-row">
+            <div>
+              <h1>案件</h1>
+              <p class="status">複数チャネルの会話を案件単位でまとめ、AIに状況把握や返信案作成を相談できます。</p>
+            </div>
+          </div>
+          <section class="settings-panel" aria-labelledby="newProjectTitle">
+            <h2 id="newProjectTitle">新規案件を作成</h2>
+            <form id="newProjectForm" class="settings-form">
+              <label>案件名<input id="newProjectName" type="text" required /></label>
+              <label>要約（任意）<textarea id="newProjectSummary"></textarea></label>
+              <button type="submit">作成する</button>
+              <p id="newProjectStatus" class="status" aria-live="polite"></p>
+            </form>
+          </section>
+          <div id="projectList" class="shelf-list" aria-label="案件一覧"></div>
+        </div>
+
+        <div id="projectDetailPane" class="is-hidden">
+          <button id="backToProjectsButton" type="button" class="secondary">← 案件一覧へ戻る</button>
+          <div class="summary-row">
+            <div>
+              <h1 id="projectDetailName"></h1>
+              <p id="projectDetailSummary" class="status"></p>
+            </div>
+          </div>
+
+          <section class="settings-panel" aria-labelledby="channelsTitle">
+            <h2 id="channelsTitle">紐付けチャネル</h2>
+            <div id="channelList" class="shelf-list" aria-label="チャネル一覧"></div>
+            <form id="newChannelForm" class="settings-form">
+              <div class="field-grid">
+                <label>ソース
+                  <select id="channelSource">
+                    <option value="chatwork">Chatwork</option>
+                    <option value="coconala">ココナラ</option>
+                    <option value="other">その他</option>
+                  </select>
+                </label>
+                <label>相手の役割
+                  <select id="channelCounterpartRole">
+                    <option value="customer">顧客</option>
+                    <option value="engineer">エンジニア</option>
+                    <option value="mixed">混在</option>
+                  </select>
+                </label>
+              </div>
+              <label>外部会話ID<input id="channelExternalId" type="text" required /></label>
+              <label>ラベル（任意）<input id="channelLabel" type="text" /></label>
+              <button type="submit">チャネルを追加</button>
+              <p id="newChannelStatus" class="status" aria-live="polite"></p>
+            </form>
+            <button id="syncChatworkButton" type="button" class="secondary">Chatwork同期実行</button>
+            <p id="syncStatus" class="status" aria-live="polite"></p>
+          </section>
+
+          <section class="settings-panel" aria-labelledby="manualMessageTitle">
+            <h2 id="manualMessageTitle">手動メッセージ投入（ココナラ等）</h2>
+            <form id="manualMessageForm" class="settings-form">
+              <label>投入先チャネル
+                <select id="manualChannelSelect" required></select>
+              </label>
+              <div class="field-grid">
+                <label>発言者の役割
+                  <select id="manualSenderRole">
+                    <option value="customer">顧客</option>
+                    <option value="internal">運営者</option>
+                    <option value="engineer">エンジニア</option>
+                  </select>
+                </label>
+                <label>発言者表示名<input id="manualSenderName" type="text" /></label>
+              </div>
+              <label>本文<textarea id="manualMessageBody" required></textarea></label>
+              <button type="submit">投入する</button>
+              <p id="manualMessageStatus" class="status" aria-live="polite"></p>
+            </form>
+          </section>
+
+          <section class="settings-panel" aria-labelledby="timelineTitle">
+            <h2 id="timelineTitle">メッセージタイムライン</h2>
+            <div id="messageTimeline" class="detail-grid"></div>
+          </section>
+
+          <section class="settings-panel" aria-labelledby="assistTitle">
+            <h2 id="assistTitle">AIアシスト</h2>
+            <form id="assistForm" class="settings-form">
+              <label>モード
+                <select id="assistMode">
+                  <option value="status">状況把握</option>
+                  <option value="reconcile">発言照合</option>
+                  <option value="draft_reply">返信案作成</option>
+                </select>
+              </label>
+              <div id="assistDraftFields" class="field-grid is-hidden">
+                <label>意図<input id="assistIntent" type="text" placeholder="例: 見積り金額の調整について回答する" /></label>
+                <label>宛先
+                  <select id="assistAudience">
+                    <option value="customer">顧客向け</option>
+                    <option value="engineer">エンジニア向け</option>
+                  </select>
+                </label>
+              </div>
+              <button type="submit">AIに聞く</button>
+              <p id="assistStatus" class="status" aria-live="polite"></p>
+            </form>
+            <div id="assistResult"></div>
+          </section>
+        </div>
+      </section>
+
       <section id="settingsView" class="view is-hidden">
         <h1>設定</h1>
         <div id="billingPanel" class="settings-panel"></div>
+        <section class="settings-panel">
+          <h2>担当者登録（internal_staff）</h2>
+          <p class="status">Chatworkのaccount_idを運営者・エンジニアとして登録します。案件内の発言が誰のものか（visibility判定）に使われます。</p>
+          <form id="staffForm" class="settings-form">
+            <div class="field-grid">
+              <label>ソース
+                <select id="staffSource">
+                  <option value="chatwork">Chatwork</option>
+                </select>
+              </label>
+              <label>役割
+                <select id="staffRole">
+                  <option value="operator">運営者</option>
+                  <option value="engineer">エンジニア</option>
+                </select>
+              </label>
+            </div>
+            <label>ソース側account_id<input id="staffAccountId" type="text" required /></label>
+            <label>表示名（任意）<input id="staffDisplayName" type="text" /></label>
+            <button type="submit">登録する</button>
+            <p id="staffStatus" class="status" aria-live="polite"></p>
+          </form>
+          <div id="staffList" class="shelf-list" aria-label="登録済み担当者"></div>
+        </section>
         <section class="settings-panel">
           <h2>朝のダイジェスト</h2>
           <form id="digestSettingsForm" class="settings-form">
