@@ -69,6 +69,18 @@ var COUNTERPART_ROLE_LABEL_JA = { customer: '顧客', engineer: 'エンジニア
 var SENDER_ROLE_LABEL_JA = { internal: '運営者', customer: '顧客', engineer: 'エンジニア', unknown: '不明' };
 var STAFF_ROLE_LABEL_JA = { operator: '運営者', engineer: 'エンジニア' };
 
+// 「人物」の見せ方（アイコン＝表示名の先頭1文字＋安定した色）は
+// reply-copilot-openrouter-v2 の shared/conversation-render.js（avatarFor）と同一ロジック。
+// このプロジェクトはDBにアバター画像URLを持たないため頭文字表示のみだが、
+// 色の決め方・フォールバックの考え方は「人物の見せ方」の正本に合わせる。
+var AVATAR_COLORS = ['#5a6b7a', '#8a6d3b', '#4e7a5c', '#a86c28', '#7b766a', '#b8502f'];
+function avatarFor(name) {
+  var n = String(name || '');
+  var h = 0;
+  for (var i = 0; i < n.length; i += 1) h = (h * 31 + n.charCodeAt(i)) >>> 0;
+  return { ch: (n.trim()[0] || '?'), color: AVATAR_COLORS[h % AVATAR_COLORS.length] };
+}
+
 function capacitorBridge() {
   return window.Capacitor || null;
 }
@@ -564,6 +576,16 @@ function renderMessageTimeline() {
     var card = document.createElement('div');
     card.className = 'message-card';
 
+    var head = document.createElement('div');
+    head.className = 'message-head';
+    var av = avatarFor(message.sender_display_name || message.sender_role);
+    var icon = document.createElement('div');
+    icon.className = 'avatar';
+    icon.style.background = av.color;
+    icon.textContent = av.ch;
+    icon.title = message.sender_account_id ? 'ID: ' + message.sender_account_id : '';
+    head.appendChild(icon);
+
     var meta = document.createElement('div');
     meta.className = 'message-meta';
     var left = document.createElement('span');
@@ -571,6 +593,7 @@ function renderMessageTimeline() {
     var right = document.createElement('span');
     right.textContent = new Date(message.sent_at).toLocaleString('ja-JP');
     meta.append(left, right);
+    head.appendChild(meta);
 
     var badgeRow = document.createElement('div');
     badgeRow.className = 'message-meta';
@@ -605,7 +628,7 @@ function renderMessageTimeline() {
     body.className = 'message-body';
     body.textContent = message.body;
 
-    card.append(meta, badgeRow, body);
+    card.append(head, badgeRow, body);
     messageTimeline.appendChild(card);
   });
 }

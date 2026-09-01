@@ -317,7 +317,25 @@ input:focus, textarea:focus {
   display: grid;
   gap: 6px;
 }
+.message-card .message-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.message-card .avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
 .message-card .message-meta {
+  flex: 1;
   display: flex;
   justify-content: space-between;
   gap: 8px;
