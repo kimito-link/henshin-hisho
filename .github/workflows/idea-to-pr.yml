@@ -1,0 +1,97 @@
+# 【金型テンプレート】思いつき・不具合報告をそのままIssue→実装→PRまで自動化する
+#
+# 出典: 公式 anthropics/claude-code-action（https://github.com/anthropics/claude-code-action）
+# 設計: web-ios-androidキット新規実装（2026-09-07）
+#
+# 背景:
+#   スマホでGrok等のAIチャットアプリに思いつき・不具合報告・機能改善要望を投げ、
+#   GrokのGitHubコネクター（2026-05のxAI Connectors。OAuth接続でGitHubを直接読み書き）
+#   経由でこのリポジトリにIssueを起票すると、このワークフローが自動で起動し、
+#   Claude CodeがIssue本文を読んで実装し、PRを作成する。
+#   人が「実装して」と依頼する手間・PCを開く手間を無くすのが目的
+#   （CLAUDE.md「確認と不具合対応の共通ルール」と同じ思想＝ユーザーに作業をさせない）。
+#
+# ── このテンプレの使い方 ──────────────────────────────────────────
+# 1. このファイルをアプリリポの `.github/workflows/idea-to-pr.yml` にコピー。
+# 2. Claude GitHub App（https://github.com/apps/claude）をこのリポジトリにインストールする
+#    （Contents/Issues/Pull requests の読み書き権限を付与。1回だけ）。
+# 3. ローカルで `claude setup-token` を実行し、発行されたトークンを
+#    リポジトリのGitHub Secretsに `CLAUDE_CODE_OAUTH_TOKEN` として登録する
+#    （Claude Pro/Max/Team/Enterpriseのサブスク利用枠を使う方式。既定はこちら）。
+# 4. Grok（またはChatGPT/Gemini等）にGitHubコネクターを接続し、対象リポジトリへの
+#    Issue作成権限を許可する（Grokアプリの設定 → Connectors → GitHub）。
+# 5. GrokにIssueを起票させたら、このワークフローが自動で実装しPRを作る。
+#    完了はIssue/PRへのコメントで分かる（GrokがGitHubの通知を見て報告することも、
+#    ユーザーが直接Issue/PRを見ることもできる）。
+#
+# ── 対象を絞る（推奨） ─────────────────────────────────────────
+#   誰でもIssueを開くと実行されてしまうため、既定では特定ラベルが付いたIssueだけ
+#   対象にする（下記 `if:` 参照）。Grok側でIssue作成時に `ai-task` ラベルを
+#   付けるよう指示するか、Issueテンプレートで既定ラベルにする。
+#
+# ── 認証方式（どちらか一方） ───────────────────────────────────
+#   ★既定は CLAUDE_CODE_OAUTH_TOKEN（サブスク認証）。追加の従量課金が発生しない
+#   （契約プランの使用量枠を消費する方式）。
+#   - CLAUDE_CODE_OAUTH_TOKEN … Claude Pro/Max/Team/Enterpriseのサブスク認証
+#                                （ローカルで `claude setup-token` を実行して取得）
+#   - ANTHROPIC_API_KEY       … Claude APIキー（Claude Console発行・従量課金）。
+#                                サブスク契約が無い場合はこちらを使う。使う場合は
+#                                下のステップの `claude_code_oauth_token:` の行を
+#                                `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}`
+#                                に書き換える。
+#
+# ── 安全上の注意 ──────────────────────────────────────────────
+#   ★誰でもIssueを作れるリポジトリでは、書き込み権限を持たないユーザーが作った
+#     Issueでは実行されない（claude-code-action標準の安全チェック）。
+#   ★実装は自動でPRになるが、mainへの自動マージはしない。必ず人がPRを確認する。
+#   ★秘密情報・課金・外部送信を伴う変更は、CLAUDE.mdの既存境界規則に従い
+#     Issue本文で明示的に許可されない限り実行しない（プロンプト側で制約する）。
+
+name: idea-to-pr
+
+on:
+  issues:
+    types: [opened, labeled]
+
+concurrency:
+  group: idea-to-pr-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    # 既定: "ai-task" ラベルが付いたIssueだけ対象にする（誰でもIssueを開けるリポジトリでの暴発防止）。
+    # ラベル運用をしない場合は `if:` の行を削除する。
+    if: contains(github.event.issue.labels.*.name, 'ai-task')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            以下のGitHub Issueを読んで実装してください。
+
+            タイトル: ${{ github.event.issue.title }}
+            本文:
+            ${{ github.event.issue.body }}
+
+            手順:
+            1. まずリポジトリ直下のCLAUDE.md（存在すれば）を読み、プロジェクトの運用ルールに従う。
+            2. Issue内容を実装するために必要な変更を行う。
+            3. 変更後、対象のテスト・Gate（存在すれば）を実行して確認する。
+            4. 新しいブランチを切り、変更をコミットし、このIssueを参照するPRを作成する
+               （PR本文に "Closes #${{ github.event.issue.number }}" を含める）。
+            5. 秘密情報・外部への課金・破壊的操作が必要だと分かった場合は、実装を進めず
+               Issueにコメントでその旨を報告して終了する。
+          claude_args: |
+            --max-turns 40
