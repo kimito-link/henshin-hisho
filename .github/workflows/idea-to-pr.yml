@@ -91,7 +91,14 @@ jobs:
             3. 変更後、対象のテスト・Gate（存在すれば）を実行して確認する。
             4. 新しいブランチを切り、変更をコミットし、このIssueを参照するPRを作成する
                （PR本文に "Closes #${{ github.event.issue.number }}" を含める）。
+               git・gh コマンドは既にこのワークフロー内で認証済みなので、そのまま使ってよい。
             5. 秘密情報・外部への課金・破壊的操作が必要だと分かった場合は、実装を進めず
                Issueにコメントでその旨を報告して終了する。
+          # ★automation mode（promptを渡す方式）はツールを明示しないと一切使えない
+          # （公式ドキュメント: "Claude has no shell or GitHub API access until you grant
+          # the tools the prompt needs"）。--allowedTools を書き忘れると、実装はできても
+          # git commit・PR作成の段階で全滅する（2026-09-07、このキット自身の実地検証で発見。
+          # 40ターン実行してsuccess終了したのにPRが1件も作られなかった＝permission_denials_count:14）。
           claude_args: |
             --max-turns 40
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep"
