@@ -139,3 +139,41 @@ export async function listRecentBuilds(api, appId, limit = 10) {
 export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// 2026-09-08 追加: 売上ダッシュボード用。GET /v1/salesReports は gzip の TSV を返す
+// (makeAscClient の api() は JSON.parse 前提のため使えない)。生バイトを返す関数を
+// 同ファイルに1つ足すだけに留める(新規ファイルにしない。設計 F8)。
+//
+// 売上ゼロの日は 404「There were no sales for the date specified」を返す。
+// これはエラーではなく0件を意味する。呼び出し側で判別できるよう
+// { notFound: true } を返す(例外を投げない)。それ以外の非2xxは例外を投げる。
+export async function fetchSalesReportRaw({ keyId, issuerId, privateKey, vendorNumber, reportDate, version = '1_1' }) {
+  const params = new URLSearchParams({
+    'filter[frequency]': 'DAILY',
+    'filter[reportType]': 'SALES',
+    'filter[reportSubType]': 'SUMMARY',
+    'filter[vendorNumber]': vendorNumber,
+    'filter[reportDate]': reportDate,
+    'filter[version]': version,
+  });
+  const url = `${HOST}/v1/salesReports?${params.toString()}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${makeAscJwt({ keyId, issuerId, privateKey })}`,
+      Accept: 'application/a-gzip',
+    },
+  });
+  if (res.status === 404) {
+    const text = await res.text();
+    if (text.includes('no sales for the date') || text.includes('No sales report')) {
+      return { notFound: true };
+    }
+    throw new Error(`GET /v1/salesReports (${reportDate}) -> 404: ${text.slice(0, 400)}`);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GET /v1/salesReports (${reportDate}) -> ${res.status}: ${text.slice(0, 400)}`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  return { notFound: false, gzipBuffer: buf };
+}
