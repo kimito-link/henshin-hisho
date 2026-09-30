@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "github-actions": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "X-MCP-Toolsets": "context,repos,actions",
+        "X-MCP-Lockdown": "true"
+      }
+    },
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
