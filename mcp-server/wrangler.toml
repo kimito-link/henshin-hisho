@@ -1,0 +1,7 @@
+name = "henshin-hisho-mcp"
+main = "src/index.js"
+compatibility_date = "2026-07-06"
+
+[[kv_namespaces]]
+binding = "MCP_KV"
+id = "5cd4b2d1ed354f3399a11bc9dd26d070"

@@ -33,7 +33,7 @@ export function corsHeaders(request, env) {
   if (origin && (wildcard || allowList.includes(origin))) {
     // ACAO には「マッチした実オリジン」を返す(リストは返せない)。
     headers['Access-Control-Allow-Origin'] = origin;
-    headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
+    headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS';
     headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
   }
   return headers;

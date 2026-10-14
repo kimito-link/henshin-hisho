@@ -26,6 +26,9 @@ export function newMessageId() {
 export function newManualExternalMessageId() {
   return `manual_${Date.now()}_${randomHex(8)}`;
 }
+export function newImportToken() {
+  return `impt_${randomHex(32)}`;
+}
 
 export async function createProject(db, { userId, name, summary = '' }) {
   const id = newProjectId();
@@ -207,4 +210,58 @@ export async function patchMessageVisibility(db, { userId, projectId, messageId,
     .bind(visibility, messageId, projectId, userId)
     .run();
   return { ok: result.meta.changes === 1 };
+}
+
+/**
+ * インポートトークン（拡張連携用）。requireAuth のセッション認証とは別軸。
+ * 設計: docs/PROJECT-AI-IMPLEMENTATION-HANDOFF.md 継続（ランサーズ等の拡張抽出データの受け口）。
+ */
+export async function createImportToken(db, { projectId }) {
+  const token = newImportToken();
+  const now = Date.now();
+  await db
+    .prepare(`INSERT INTO project_import_tokens (token, project_id, created_at, revoked_at) VALUES (?1, ?2, ?3, NULL)`)
+    .bind(token, projectId, now)
+    .run();
+  return { token, project_id: projectId, created_at: now, revoked_at: null };
+}
+
+export async function listImportTokens(db, { projectId }) {
+  const { results } = await db
+    .prepare(`SELECT token, project_id, created_at, revoked_at FROM project_import_tokens WHERE project_id = ?1 ORDER BY created_at DESC`)
+    .bind(projectId)
+    .all();
+  return results;
+}
+
+export async function revokeImportToken(db, { userId, projectId, token }) {
+  const result = await db
+    .prepare(
+      `UPDATE project_import_tokens SET revoked_at = ?1
+       WHERE token = ?2 AND project_id = ?3 AND revoked_at IS NULL
+         AND EXISTS (SELECT 1 FROM projects p WHERE p.id = ?3 AND p.user_id = ?4)`
+    )
+    .bind(Date.now(), token, projectId, userId)
+    .run();
+  return { ok: result.meta.changes === 1 };
+}
+
+/** 有効な（revoked_atがNULLの）トークンから projectId を引く。拡張側からの認証に使う。 */
+export async function resolveImportToken(db, { token }) {
+  const row = await db
+    .prepare(`SELECT project_id FROM project_import_tokens WHERE token = ?1 AND revoked_at IS NULL`)
+    .bind(token)
+    .first();
+  return row ? row.project_id : null;
+}
+
+/** source + externalConversationId で既存チャネルを引く。無ければ拡張連携側が新規作成する。 */
+export async function findChannelLinkBySource(db, { projectId, source, externalConversationId }) {
+  const row = await db
+    .prepare(
+      `SELECT * FROM project_channel_links WHERE project_id = ?1 AND source = ?2 AND external_conversation_id = ?3`
+    )
+    .bind(projectId, source, externalConversationId)
+    .first();
+  return row || null;
 }

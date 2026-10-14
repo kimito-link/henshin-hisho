@@ -20,7 +20,8 @@ var state = {
   projects: [],
   selectedProjectId: '',
   projectDetail: null,
-  staff: []
+  staff: [],
+  importTokens: []
 };
 
 var authView = document.getElementById('authView');
@@ -52,6 +53,9 @@ var newChannelForm = document.getElementById('newChannelForm');
 var newChannelStatus = document.getElementById('newChannelStatus');
 var syncChatworkButton = document.getElementById('syncChatworkButton');
 var syncStatus = document.getElementById('syncStatus');
+var importTokenList = document.getElementById('importTokenList');
+var createImportTokenButton = document.getElementById('createImportTokenButton');
+var importTokenStatus = document.getElementById('importTokenStatus');
 var manualChannelSelect = document.getElementById('manualChannelSelect');
 var manualMessageForm = document.getElementById('manualMessageForm');
 var manualMessageStatus = document.getElementById('manualMessageStatus');
@@ -500,6 +504,55 @@ async function refreshProjectDetail() {
   renderChannelList();
   renderManualChannelSelect();
   renderMessageTimeline();
+  await refreshImportTokens();
+}
+
+async function refreshImportTokens() {
+  try {
+    var data = await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/import-tokens');
+    state.importTokens = data.importTokens || [];
+  } catch {
+    state.importTokens = [];
+  }
+  renderImportTokenList();
+}
+
+function renderImportTokenList() {
+  if (!importTokenList) return;
+  importTokenList.innerHTML = '';
+  var tokens = (state.importTokens || []).filter(function (t) { return !t.revoked_at; });
+  if (!tokens.length) {
+    var empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'まだトークンを発行していません。';
+    importTokenList.appendChild(empty);
+    return;
+  }
+  tokens.forEach(function (importToken) {
+    var row = document.createElement('div');
+    row.className = 'message-card';
+    var meta = document.createElement('div');
+    meta.className = 'message-meta';
+    var left = document.createElement('span');
+    left.textContent = importToken.token;
+    var right = document.createElement('button');
+    right.type = 'button';
+    right.className = 'secondary';
+    right.textContent = '失効';
+    right.addEventListener('click', async function () {
+      setText(importTokenStatus, '失効しています。');
+      try {
+        await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/import-tokens/' + encodeURIComponent(importToken.token), { method: 'DELETE' });
+        setText(importTokenStatus, '失効しました。');
+        await refreshImportTokens();
+      } catch {
+        setText(importTokenStatus, '失効できませんでした。');
+      }
+    });
+    meta.append(left, right);
+    row.appendChild(meta);
+    importTokenList.appendChild(row);
+  });
 }
 
 function renderProjectDetailHeader() {
@@ -946,6 +999,17 @@ syncChatworkButton.addEventListener('click', async function () {
     await refreshProjectDetail();
   } catch {
     setText(syncStatus, '同期できませんでした。');
+  }
+});
+
+createImportTokenButton.addEventListener('click', async function () {
+  setText(importTokenStatus, '発行しています。');
+  try {
+    await api('/projects/' + encodeURIComponent(state.selectedProjectId) + '/import-tokens', { method: 'POST', body: {} });
+    setText(importTokenStatus, '発行しました。拡張の「連携設定」に貼り付けてください。');
+    await refreshImportTokens();
+  } catch {
+    setText(importTokenStatus, '発行できませんでした。');
   }
 });
 

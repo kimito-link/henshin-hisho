@@ -119,6 +119,7 @@
                   <select id="channelSource">
                     <option value="chatwork">Chatwork</option>
                     <option value="coconala">ココナラ</option>
+                    <option value="lancers">ランサーズ</option>
                     <option value="other">その他</option>
                   </select>
                 </label>
@@ -139,8 +140,16 @@
             <p id="syncStatus" class="status" aria-live="polite"></p>
           </section>
 
+          <section class="settings-panel" aria-labelledby="importTokensTitle">
+            <h2 id="importTokensTitle">拡張連携（Chatwork・ランサーズ）</h2>
+            <p class="status">「りんくのAI返信秘書」Chrome拡張のしおり機能が抽出した会話を取り込みます。発行したトークンを拡張の「連携設定」に貼り付けてください。</p>
+            <div id="importTokenList" class="shelf-list" aria-label="発行済みトークン一覧"></div>
+            <button id="createImportTokenButton" type="button" class="secondary">トークンを発行</button>
+            <p id="importTokenStatus" class="status" aria-live="polite"></p>
+          </section>
+
           <section class="settings-panel" aria-labelledby="manualMessageTitle">
-            <h2 id="manualMessageTitle">手動メッセージ投入（ココナラ等）</h2>
+            <h2 id="manualMessageTitle">手動メッセージ投入（ココナラ・ランサーズ等）</h2>
             <form id="manualMessageForm" class="settings-form">
               <label>投入先チャネル
                 <select id="manualChannelSelect" required></select>

@@ -12,18 +12,23 @@ import { runChatworkSync } from '../connectors/chatwork.js';
 import { runAssist } from './assist.js';
 import {
   createChannelLink,
+  createImportToken,
   createInternalStaff,
   createProject,
   fetchProjectMessages,
+  findChannelLinkBySource,
   getChannelLink,
   getProjectForUser,
   insertMessageIfNew,
   listChannelLinks,
+  listImportTokens,
   listInternalStaff,
   listProjects,
   loadStaffMap,
   newManualExternalMessageId,
-  patchMessageVisibility
+  patchMessageVisibility,
+  resolveImportToken,
+  revokeImportToken
 } from './db.js';
 import { decideVisibility } from './visibility.js';
 import { maskSecrets } from './masker.js';
@@ -40,7 +45,11 @@ export function projectsRouteMatch(pathname) {
   if (withMessagePatch) {
     return { projectId: decodeURIComponent(withMessagePatch[1]), action: 'message-visibility', subId: decodeURIComponent(withMessagePatch[2]) };
   }
-  const withAction = pathname.match(/^\/projects\/([^/]+)\/(channels|messages\/manual|sync|assist)$/);
+  const withTokenRevoke = pathname.match(/^\/projects\/([^/]+)\/import-tokens\/([^/]+)$/);
+  if (withTokenRevoke) {
+    return { projectId: decodeURIComponent(withTokenRevoke[1]), action: 'import-token-revoke', subId: decodeURIComponent(withTokenRevoke[2]) };
+  }
+  const withAction = pathname.match(/^\/projects\/([^/]+)\/(channels|messages\/manual|messages\/import|sync|assist|import-tokens)$/);
   if (withAction) {
     return { projectId: decodeURIComponent(withAction[1]), action: withAction[2] };
   }
@@ -136,6 +145,121 @@ async function handleManualMessage(request, env, projectId) {
     sentAt: Number(payload?.sentAt) || Date.now()
   });
   return jsonResponse(request, env, { ok: true, message: { id, visibility, masked } });
+}
+
+/**
+ * 拡張連携（henshin-hisho-sync）用のトークン認証。requireAuth（セッション）とは別軸。
+ * トークンが正しくても projectId が一致しなければ 404 にする（他人のプロジェクトIDを
+ * 総当たりされても、存在確認すら返さないため）。
+ */
+async function requireImportToken(request, env, projectId) {
+  const header = request.headers.get('Authorization') || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (!token) return { ok: false, status: 401, body: { ok: false, reason: 'missing_token' } };
+  const resolvedProjectId = await resolveImportToken(env.PROJECT_DB, { token });
+  if (!resolvedProjectId || resolvedProjectId !== projectId) {
+    return { ok: false, status: 404, body: { ok: false, reason: 'not_found' } };
+  }
+  return { ok: true };
+}
+
+async function handleCreateImportToken(request, env, projectId) {
+  const auth = await requireAuth(request, env);
+  if (!auth.ok) return authError(request, env, auth);
+  const project = await getProjectForUser(env.PROJECT_DB, { userId: auth.user.id, projectId });
+  if (!project) return jsonResponse(request, env, { ok: false, reason: 'not_found' }, 404);
+  const created = await createImportToken(env.PROJECT_DB, { projectId });
+  return jsonResponse(request, env, { ok: true, importToken: created });
+}
+
+async function handleListImportTokens(request, env, projectId) {
+  const auth = await requireAuth(request, env);
+  if (!auth.ok) return authError(request, env, auth);
+  const project = await getProjectForUser(env.PROJECT_DB, { userId: auth.user.id, projectId });
+  if (!project) return jsonResponse(request, env, { ok: false, reason: 'not_found' }, 404);
+  const importTokens = await listImportTokens(env.PROJECT_DB, { projectId });
+  return jsonResponse(request, env, { ok: true, importTokens });
+}
+
+async function handleRevokeImportToken(request, env, projectId, token) {
+  const auth = await requireAuth(request, env);
+  if (!auth.ok) return authError(request, env, auth);
+  const result = await revokeImportToken(env.PROJECT_DB, { userId: auth.user.id, projectId, token });
+  return jsonResponse(request, env, result, result.ok ? 200 : 404);
+}
+
+/**
+ * 拡張（Chrome拡張「りんくのAI返信秘書」しおり機能）から、既に抽出済みのメッセージを
+ * 一括で受け取る。ランサーズ・Chatwork向け（ココナラはhandleManualMessageの手動貼り付けを使う）。
+ *
+ * handleManualMessage と違い、externalMessageId は呼び出し側（拡張）が発行した値を
+ * そのまま使う。insertMessageIfNew の UNIQUE(source, external_message_id) が冪等性を担保する
+ * ため、拡張側が同じデータを再送しても二重登録されない。
+ * チャネル（project_channel_links）が無ければ自動作成する（counterpart_role の既定は customer、
+ * 後からUIで変更可能）。
+ */
+async function handleImportMessages(request, env, projectId) {
+  const tokenAuth = await requireImportToken(request, env, projectId);
+  if (!tokenAuth.ok) return jsonResponse(request, env, tokenAuth.body, tokenAuth.status);
+  // ↑ トークンが有効かつ projectId と一致していれば、プロジェクトの実在は保証される
+  //   （project_import_tokens.project_id は projects(id) への外部キー参照）。
+  const payload = await readJson(request);
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  if (!messages.length) {
+    return jsonResponse(request, env, { ok: false, reason: 'empty_messages' }, 400);
+  }
+  const defaultCounterpartRole = ['customer', 'engineer', 'mixed'].includes(payload?.defaultCounterpartRole)
+    ? payload.defaultCounterpartRole
+    : 'customer';
+
+  const channelCache = new Map(); // "source:externalConversationId" -> channelLink
+  let imported = 0;
+  let skipped = 0;
+  for (const raw of messages) {
+    const source = String(raw?.source || '').trim();
+    const externalConversationId = String(raw?.externalConversationId || '').trim();
+    const externalMessageId = String(raw?.externalMessageId || '').trim();
+    const body = String(raw?.body || '').trim();
+    if (!source || !externalConversationId || !externalMessageId || !body) {
+      skipped += 1;
+      continue;
+    }
+    const cacheKey = `${source}:${externalConversationId}`;
+    let channelLink = channelCache.get(cacheKey);
+    if (!channelLink) {
+      channelLink = await findChannelLinkBySource(env.PROJECT_DB, { projectId, source, externalConversationId });
+      if (!channelLink) {
+        channelLink = await createChannelLink(env.PROJECT_DB, {
+          projectId,
+          source,
+          externalConversationId,
+          label: String(raw?.conversationLabel || '').trim(),
+          counterpartRole: defaultCounterpartRole,
+          defaultVisibility: decideVisibility({ senderRole: 'unknown', channelLink: { counterpart_role: defaultCounterpartRole } })
+        });
+      }
+      channelCache.set(cacheKey, channelLink);
+    }
+    const senderRole = raw?.fromSelf ? 'internal' : 'unknown';
+    const visibility = decideVisibility({ senderRole, channelLink });
+    const { text: bodyMasked, masked } = maskSecrets(body);
+    const { inserted } = await insertMessageIfNew(env.PROJECT_DB, {
+      projectId,
+      channelLinkId: channelLink.id,
+      source: channelLink.source,
+      externalMessageId,
+      senderRole,
+      senderAccountId: '',
+      senderDisplayName: String(raw?.senderDisplayName || '').trim(),
+      visibility,
+      body: bodyMasked,
+      masked,
+      sentAt: Number(raw?.sentAt) || Date.now()
+    });
+    if (inserted) imported += 1;
+    else skipped += 1;
+  }
+  return jsonResponse(request, env, { ok: true, imported, skipped });
 }
 
 async function handleSync(request, env, projectId) {
@@ -243,6 +367,18 @@ export async function handleProjectsRoute(request, env) {
   }
   if (match && request.method === 'POST' && match.action === 'messages/manual') {
     return await handleManualMessage(request, env, match.projectId);
+  }
+  if (match && request.method === 'POST' && match.action === 'messages/import') {
+    return await handleImportMessages(request, env, match.projectId);
+  }
+  if (match && request.method === 'POST' && match.action === 'import-tokens') {
+    return await handleCreateImportToken(request, env, match.projectId);
+  }
+  if (match && request.method === 'GET' && match.action === 'import-tokens') {
+    return await handleListImportTokens(request, env, match.projectId);
+  }
+  if (match && request.method === 'DELETE' && match.action === 'import-token-revoke') {
+    return await handleRevokeImportToken(request, env, match.projectId, match.subId);
   }
   if (match && request.method === 'POST' && match.action === 'sync') {
     return await handleSync(request, env, match.projectId);
