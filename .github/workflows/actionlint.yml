@@ -1,0 +1,70 @@
+# ワークフロー定義そのものが壊れているのを止める。
+#
+# ★なぜ要るか（2026-10-16 に実損）:
+#   kimito-Link-Voice の asc-review-poll が 10/04 以降ずっと failure だったが、
+#   **ジョブが1件も走らずログも残らない**ので原因が見えなかった
+#   （`failed to get run log: log not found`）。
+#   真因は `jobs.poll.env:` が中身の無い空キーだったこと。GitHub は
+#   `failed to parse workflow: Unexpected value ''` で**起動前に**定義を捨てる。
+#   ⟹ テストをいくら足してもこの型は捕まらない（走る前に死んでいる）。
+#
+#   同じ型が sakkino.link にも2本あった（文字化けが改行を飲んで steps: まで消えた）。
+#
+# ★なぜ自前の検査を書かないか:
+#   actionlint が既にこの型を見ている。実際に当てて確かめた:
+#     修正前の実ファイル2本 → exit 1 で名指し / 修正後 → exit 0
+#     文字化け無しの純粋な空 env: → `env:` の行を名指しして exit 1
+#   検知器は上流にあったのに、壊れた2リポのどちらにも配線が無かったのが穴だった。
+#
+# ★ローカルの YAML パーサは空 env: を通す（null と解釈する）。
+#   「手元で YAML が読めたから大丈夫」は成り立たない。CI で走って初めて効く。
+name: Actionlint
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/actionlint.yaml"
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actionlint.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: ワークフロー定義の検査
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # ★shellcheck は ubuntu ランナーに既に入っている。
+      #   入っていない環境だと actionlint は shellcheck 分を**黙って飛ばす**ので、
+      #   「exit 0」が「指摘なし」ではなく「測っていない」になる（2026-10-16 に踏んだ）。
+      - name: shellcheck があることを確かめる（無いと黙って検査が減る）
+        run: shellcheck --version
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+
+      # ★止めるのはここだけ: 定義が壊れていて【起動すらできない】型。
+      #   shellcheck を切って走らせる（-shellcheck= で無効化）。
+      #   空 env: などの定義エラーは shellcheck 無しでも検出される（実測で確認）。
+      - name: ★定義の検査（ここが赤なら起動しない。直してから進む）
+        run: ./actionlint -color -shellcheck=
+
+      # shellcheck の指摘は【参考】。ここでは落とさない。
+      #   ★理由: 実測した29件は全て info/style で、挙動の誤りではなかった。
+      #   iOS リリース経路など検証できない場所を style 指摘だけで触ると、
+      #   直す方が危ない（severity は挙動を変える理由にならない）。
+      #   ★見えなくはしない。気づいた人が直せるよう常に表示する。
+      - name: shellcheck の指摘（参考・落とさない）
+        continue-on-error: true
+        run: ./actionlint -color
