@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { parseTriageContent } from '../src/triage.js';
+import { createFakeD1 } from './fake-d1.js';
 
 let pass = 0;
 let fail = 0;
@@ -43,6 +44,7 @@ function createMemoryKv(initial = {}) {
 function createEnv(initial = {}) {
   return {
     APP_KV: createMemoryKv(initial),
+    PROJECT_DB: createFakeD1(),
     SESSION_SECRET: 'test_session_secret_that_is_long_enough',
     APP_ALLOWED_ORIGIN: 'https://henshin-hisho.link',
     OPENROUTER_API_KEY: 'sk-or-v1_test',

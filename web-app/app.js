@@ -439,7 +439,7 @@ function renderDraftControls(item) {
     } catch (error) {
       setText(status, error.body?.reason === 'risk_confirmation_required'
         ? '高リスク確認を先に完了してください。'
-        : '下書きを生成できませんでした。');
+        : (error.body?.message || '下書きを生成できませんでした。'));
     } finally {
       button.disabled = false;
     }
@@ -694,6 +694,13 @@ function renderAssistResult(result) {
     warning.textContent = '内部情報の混入を検知し、該当部分を差し替えました。';
     assistResult.appendChild(warning);
   }
+  if (result.omittedCount > 0) {
+    // 長さの上限で古い発言を外したことを正直に出す（全記録を見たように見せない）。
+    var omitted = document.createElement('p');
+    omitted.className = 'status';
+    omitted.textContent = '記録が長いため、古い発言' + result.omittedCount + '件はAIに渡していません。';
+    assistResult.appendChild(omitted);
+  }
   var output = document.createElement('div');
   output.className = 'draft-output';
   output.textContent = result.text;
@@ -777,8 +784,9 @@ pasteForm.addEventListener('submit', async function (event) {
     pasteForm.reset();
     setText(pasteStatus, '受信箱に追加しました。');
     await refreshInbox();
-  } catch {
-    setText(pasteStatus, '判定できませんでした。時間をおいてお試しください。');
+  } catch (error) {
+    // 利用上限・期限切れなどはサーバーの説明文をそのまま出す（「時間をおいて」で誤魔化さない）。
+    setText(pasteStatus, error.body?.message || '判定できませんでした。時間をおいてお試しください。');
   }
 });
 
@@ -1054,7 +1062,7 @@ assistForm.addEventListener('submit', async function (event) {
   } catch (error) {
     setText(assistStatus, error.body?.reason === 'llm_not_configured'
       ? 'AI機能が未設定です。'
-      : 'AIに聞けませんでした。');
+      : (error.body?.message || 'AIに聞けませんでした。'));
   }
 });
 

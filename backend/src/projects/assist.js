@@ -10,7 +10,7 @@
  *   二段階防御が主防御であることに変わりはない）。
  */
 
-import { callOpenRouter } from '../llm.js';
+import { callOpenRouter, MAX_PROMPT_CHARS } from '../llm.js';
 import { maskSecrets } from './masker.js';
 import { guardCustomerReplySection } from './leak-guard.js';
 
@@ -125,21 +125,57 @@ ${formatLog(internalMessages)}
 ${instruction}`;
 }
 
+export const ASSIST_MAX_TOKENS = 1500;
+// 1発言あたりの上限（長文の貼り付け1件でプロンプトが膨らまないように）。
+export const ASSIST_MAX_MESSAGE_CHARS = 1500;
+
+function clipMessage(m) {
+  const body = String(m.body || '');
+  return body.length > ASSIST_MAX_MESSAGE_CHARS ? { ...m, body: `${body.slice(0, ASSIST_MAX_MESSAGE_CHARS)}…（以下省略）` } : m;
+}
+
+/**
+ * プロンプトを組み立てる。原価の上限のため、1発言は ASSIST_MAX_MESSAGE_CHARS 字まで、
+ * 全体は MAX_PROMPT_CHARS 字に収まるまで古い発言から落とす（allMessages は新しい順）。
+ * ★落とした件数は omittedCount で返す（黙って「全記録を見た」ことにしない）。
+ * @param {{ project: object, channels: object[], allMessages: object[], mode: string, intent?: string, audience?: 'customer'|'engineer' }} params
+ */
+export function prepareAssist({ project, channels, allMessages, mode, intent, audience }) {
+  const allPublic = allMessages.filter((m) => m.visibility === 'public');
+  const allInternal = allMessages.filter((m) => m.visibility !== 'public');
+  let kept = allMessages.map(clipMessage);
+  const build = () =>
+    buildAssistPrompt({
+      project,
+      channels,
+      publicMessages: kept.filter((m) => m.visibility === 'public'),
+      internalMessages: kept.filter((m) => m.visibility !== 'public'),
+      mode,
+      intent,
+      audience
+    });
+  let userPrompt = build();
+  while (userPrompt.length > MAX_PROMPT_CHARS && kept.length > 0) {
+    kept = kept.slice(0, -1);
+    userPrompt = build();
+  }
+  // leak-guard には落とす前の全発言を渡す（照合材料を減らさない＝安全側）。
+  return { userPrompt, publicMessages: allPublic, internalMessages: allInternal, omittedCount: allMessages.length - kept.length, audience };
+}
+
 /**
  * @param {object} env
- * @param {{ project: object, channels: object[], allMessages: object[], mode: string, intent?: string, audience?: 'customer'|'engineer' }} params
- * @returns {Promise<{ text: string, masked: boolean, leakBlocked: boolean }>}
+ * @param {ReturnType<typeof prepareAssist>} prepared
+ * @param {object} reservation costGuard() が返した予約（無ければ llm.js が断る）
+ * @returns {Promise<{ text: string, masked: boolean, leakBlocked: boolean, omittedCount: number }>}
  */
-export async function runAssist(env, { project, channels, allMessages, mode, intent, audience }) {
-  const publicMessages = allMessages.filter((m) => m.visibility === 'public');
-  const internalMessages = allMessages.filter((m) => m.visibility !== 'public');
-  const userPrompt = buildAssistPrompt({ project, channels, publicMessages, internalMessages, mode, intent, audience });
+export async function runAssist(env, { userPrompt, publicMessages, internalMessages, omittedCount, audience }, reservation) {
   const rawText = await callOpenRouter(env, {
     userPrompt,
     mode: 'project-assist',
-    maxTokensOverride: 1500,
+    maxTokensOverride: ASSIST_MAX_TOKENS,
     temperatureOverride: 0.3
-  });
+  }, { reservation });
   // 出力側の第3防御層。プロンプト指示(ルール5)をLLMが守らなかった場合に備え、
   // 顧客向け返信案に内部ログ限定の金額が混入していないかを機械的に検証する(2026-08-31実損対応)。
   // エンジニア向け返信案は内部情報の共有が前提のため、このガードは顧客向けのときだけ適用する。
@@ -150,5 +186,5 @@ export async function runAssist(env, { project, channels, allMessages, mode, int
       : { text: rawText, leakBlocked: false };
   // 保険としての最終サニタイズ。主防御はvisibility設計であることに変わりはない。
   const { text, masked } = maskSecrets(guarded.text);
-  return { text, masked, leakBlocked: guarded.leakBlocked };
+  return { text, masked, leakBlocked: guarded.leakBlocked, omittedCount };
 }

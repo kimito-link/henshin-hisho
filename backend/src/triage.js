@@ -24,7 +24,8 @@ export const TRIAGE_ACTIONS = Object.freeze([
 ]);
 
 const HIGH_RISK_CATEGORIES = new Set(['legal', 'medical', 'financial']);
-const RESCUE_MODEL = 'openai/gpt-4o-mini';
+export const RESCUE_MODEL = 'openai/gpt-4o-mini';
+export const TRIAGE_MAX_TOKENS = 1100;
 
 function pickEnum(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
@@ -236,7 +237,7 @@ export async function triageInboxItem(item = {}, options = {}) {
   const content = await callLLM({
     userPrompt: prompt,
     mode: 'app_triage',
-    maxTokensOverride: 1100,
+    maxTokensOverride: TRIAGE_MAX_TOKENS,
     temperatureOverride: 0.4
   });
   let triage = parseTriageContent(content, item);
@@ -246,7 +247,7 @@ export async function triageInboxItem(item = {}, options = {}) {
       const rescueContent = await callLLM({
         userPrompt: prompt,
         mode: 'app_triage',
-        maxTokensOverride: 1100,
+        maxTokensOverride: TRIAGE_MAX_TOKENS,
         temperatureOverride: 0.4,
         modelOverride: RESCUE_MODEL
       });
