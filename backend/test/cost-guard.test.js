@@ -99,7 +99,7 @@ await test('期限切れの試用は 402 plan_expired で止まり、LLM を呼�
     assert.equal(response.status, 402);
     const json = await response.json();
     assert.equal(json.reason, 'plan_expired');
-    assert.match(json.message, /有料プラン/);
+    assert.match(json.message, /月額 2,980円（年額 29,800円）で続けられます/);
     assert.equal(calls.length, 0);
   });
 });
@@ -115,7 +115,7 @@ await test('TRIAL_AI_CALLS=1 なら2回目は 429 user_quota_exhausted（LLM は
     const json = await second.json();
     assert.equal(json.reason, 'user_quota_exhausted');
     assert.equal(json.limit, 1);
-    assert.match(json.message, /使い切りました/);
+    assert.match(json.message, /試用のAI利用回数（1回）を使い切りました。月額 2,980円（年額 29,800円）で続けられます/);
     assert.equal(calls.length, callsAfterFirst);
   });
 });

@@ -27,6 +27,9 @@ export const DEFAULT_PAID_DAILY_BUDGET_MILLI = 3000; // 有料の全員分 $3/�
 export const DEFAULT_TRIAL_AI_CALLS = 60; // 試用14日間で60回
 export const DEFAULT_ACTIVE_MONTHLY_AI_CALLS = 1500; // 有料1か月で1500回
 
+// 試用切れ・試用の回数切れの表示に出す価格（★価格を変えたらここと docs/COST-GUARD.md を直す）。
+const UPGRADE_HINT = '月額 2,980円（年額 29,800円）で続けられます。';
+
 // --- 見積り（★上限と同じファイルから導く。別ファイルに数字を置かない） ---
 // OpenRouter の価格（$/100万トークン、2026-10 時点の目安を安全側に丸めた値）。
 // 日本語は1文字≒1トークン以上なので、文字数をそのままトークン数として数える（多めに見積もる側）。
@@ -132,7 +135,7 @@ export async function costGuard(env, user, { estimateMilli, nowMs = Date.now() }
   // プラン
   const account = accountPlan(user, Math.floor(nowMs / 1000));
   if (account.plan === 'expired') {
-    return deny(402, 'plan_expired', '無料お試し期間が終了しました。AI機能を続けて使うには有料プランへの登録が必要です。');
+    return deny(402, 'plan_expired', `無料お試し期間が終了しました。${UPGRADE_HINT}`);
   }
 
   const db = env.PROJECT_DB;
@@ -163,7 +166,7 @@ export async function costGuard(env, user, { estimateMilli, nowMs = Date.now() }
       const message =
         account.plan === 'active'
           ? `今月のAI利用回数の上限（${userLimit}回）に達しました。翌月1日（UTC）に戻ります。`
-          : `無料お試しのAI利用回数（${userLimit}回）を使い切りました。続けて使うには有料プランへの登録が必要です。`;
+          : `試用のAI利用回数（${userLimit}回）を使い切りました。${UPGRADE_HINT}`;
       return deny(429, 'user_quota_exhausted', message, { limit: userLimit, used: perUser.used, resetsAt: userResetsAt });
     }
 
