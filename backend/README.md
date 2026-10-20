@@ -27,6 +27,9 @@ wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 
 Use `.dev.vars.example` only for dummy local values.
 
+AI cost guard (plan check, per-user quota, daily budget, kill switch `PAID_CALLS_DISABLED=1`): see `docs/COST-GUARD.md`.
+Apply `migrations/0003_cost_counters.sql` to D1 **before** deploying, or all AI endpoints fail closed (503).
+
 ## Endpoints
 
 - `POST /auth/signup`

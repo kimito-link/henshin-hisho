@@ -1,0 +1,8 @@
+{
+  "guarded": {
+    "backend/src/llm.js": "callOpenRouter は costGuard()（backend/src/cost-guard.js）の reservation が無ければ fetch せずに断る。入口は inbox.js（assess/draft）と projects/routes.js（assist）"
+  },
+  "exempt": {
+    "backend/src.bak-20260711-233708/llm.js": "git 管理外の手元バックアップ。デプロイされない（wrangler.toml main = src/index.js）"
+  }
+}

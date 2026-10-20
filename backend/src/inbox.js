@@ -4,12 +4,13 @@ import { requireAuth } from './auth.js';
 import { jsonResponse, readJson } from './http.js';
 import { callOpenRouter } from './llm.js';
 import { getJson, listKeys, putJson } from './kv.js';
-import { generateDraftBody, normalizeSecretaryNote } from './draft-gen.js';
+import { buildDraftPrompt, DRAFT_MAX_TOKENS, generateDraftBody, normalizeSecretaryNote } from './draft-gen.js';
+import { costGuard, estimateCallMilli, resolveModel } from './cost-guard.js';
 import { accountPolicyForUser } from './account-policy.js';
 import { sendLineMessage } from './connectors/line.js';
 import { canGenerateDraft, canSendLineMessage } from './risk-gate.js';
 import { normalizeInboxItem, normalizeText } from './schema.js';
-import { triageInboxItem } from './triage.js';
+import { buildTriagePrompt, RESCUE_MODEL, TRIAGE_MAX_TOKENS, triageInboxItem } from './triage.js';
 
 export function inboxKey(userId, itemId) {
   return `inbox:${userId}:${itemId}`;
@@ -84,9 +85,18 @@ export async function handleInboxAssess(request, env, options = {}) {
     status: 'untriaged'
   });
 
+  // 原価ガード: 判定は最大2回呼ぶ（壊れたJSONの救済で RESCUE_MODEL をもう1回）ので2回分を予約する。
+  const promptChars = buildTriagePrompt(item).length;
+  const guard = await costGuard(env, auth.user, {
+    estimateMilli:
+      estimateCallMilli({ model: resolveModel(env), promptChars, maxTokens: TRIAGE_MAX_TOKENS }) +
+      estimateCallMilli({ model: RESCUE_MODEL, promptChars, maxTokens: TRIAGE_MAX_TOKENS })
+  });
+  if (!guard.ok) return jsonResponse(request, env, guard.body, guard.status);
+
   try {
     const triage = await triageInboxItem(item, {
-      callLLM: (args) => callOpenRouter(env, args, options)
+      callLLM: (args) => callOpenRouter(env, args, { ...options, reservation: guard.reservation })
     });
     const saved = await writeInboxItem(env, auth.user.id, {
       ...item,
@@ -143,9 +153,19 @@ export async function handleDraft(request, env, itemId, options = {}) {
     extraContext: payload.extraContext
   });
 
+  const draftItem = { ...item, secretaryNote };
+  const guard = await costGuard(env, auth.user, {
+    estimateMilli: estimateCallMilli({
+      model: resolveModel(env),
+      promptChars: buildDraftPrompt(draftItem, { accountPolicy }).length,
+      maxTokens: DRAFT_MAX_TOKENS
+    })
+  });
+  if (!guard.ok) return jsonResponse(request, env, guard.body, guard.status);
+
   try {
-    const body = await generateDraftBody({ ...item, secretaryNote }, {
-      callLLM: (args) => callOpenRouter(env, args, options),
+    const body = await generateDraftBody(draftItem, {
+      callLLM: (args) => callOpenRouter(env, args, { ...options, reservation: guard.reservation }),
       accountPolicy
     });
     const draft = {

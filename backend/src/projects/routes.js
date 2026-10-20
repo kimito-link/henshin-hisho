@@ -9,7 +9,9 @@
 import { requireAuth } from '../auth.js';
 import { jsonResponse, readJson } from '../http.js';
 import { runChatworkSync } from '../connectors/chatwork.js';
-import { runAssist } from './assist.js';
+import { ASSIST_MAX_TOKENS, prepareAssist, runAssist } from './assist.js';
+import { costGuard, estimateCallMilli, resolveModel } from '../cost-guard.js';
+import { MAX_PROMPT_CHARS } from '../llm.js';
 import {
   createChannelLink,
   createImportToken,
@@ -301,8 +303,22 @@ async function handleAssist(request, env, projectId) {
   }
   const channels = await listChannelLinks(env.PROJECT_DB, { projectId });
   const allMessages = await fetchProjectMessages(env.PROJECT_DB, { projectId, audience: 'owner', limit: 200 });
+  const intent = String(payload?.intent || '').slice(0, 500);
+  const prepared = prepareAssist({ project, channels, allMessages, mode, intent, audience });
+  // 発言を全部落としても長い（カルテ・チャネル概要が長すぎる）ときは、予約する前に断る。
+  if (prepared.userPrompt.length > MAX_PROMPT_CHARS) {
+    return jsonResponse(request, env, { ok: false, reason: 'prompt_too_long', message: '案件カルテが長すぎるためAIに渡せません。カルテを短くしてください。' }, 413);
+  }
+  const guard = await costGuard(env, auth.user, {
+    estimateMilli: estimateCallMilli({
+      model: resolveModel(env),
+      promptChars: prepared.userPrompt.length,
+      maxTokens: ASSIST_MAX_TOKENS
+    })
+  });
+  if (!guard.ok) return jsonResponse(request, env, guard.body, guard.status);
   try {
-    const result = await runAssist(env, { project, channels, allMessages, mode, intent: payload?.intent, audience });
+    const result = await runAssist(env, prepared, guard.reservation);
     return jsonResponse(request, env, { ok: true, result });
   } catch (error) {
     if (error?.message === 'llm_not_configured') {

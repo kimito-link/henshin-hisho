@@ -100,13 +100,15 @@ export function buildDraftPrompt(item = {}, options = {}) {
   return lines.join('\n');
 }
 
+export const DRAFT_MAX_TOKENS = 800;
+
 export async function generateDraftBody(item = {}, options = {}) {
   const callLLM = options.callLLM;
   if (typeof callLLM !== 'function') throw new Error('call_llm_required');
   const content = await callLLM({
     userPrompt: buildDraftPrompt(item, options),
     mode: 'app_draft',
-    maxTokensOverride: 800,
+    maxTokensOverride: DRAFT_MAX_TOKENS,
     temperatureOverride: 0.4
   });
   return normalizeText(content);
