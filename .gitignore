@@ -9,6 +9,7 @@ node_modules/
 
 # ビルド成果物・一時ファイル
 dist/
+dist-deploy/
 build/
 *.log
 .wrangler/
