@@ -1,13 +1,12 @@
 import { timingSafeEqual } from './http.js';
-import { WIRED_PROVIDERS } from './providers.js';
+import { detectProvider, domainOf, GMAIL_SCOPES, providerOf } from './mail/providers.js';
 
 /** linebot の apps/worker/wrangler.toml と同じ公開クライアント。秘密は置かない。 */
 export const LINEBOT_GOOGLE_CLIENT_ID = '899798982543-2jk3d2fp97c02js71opg7l1j9fa7oh5a.apps.googleusercontent.com';
 export const LINEBOT_GOOGLE_PROJECT = 'kimito-talk-oauth';
 export const LINEBOT_GOOGLE_REDIRECT = 'https://reply.kimitotalk.link/oauth/google/callback';
 
-const GMAIL = WIRED_PROVIDERS.find((provider) => provider.id === 'gmail');
-export const GMAIL_SCOPES = GMAIL.scopes;
+export { GMAIL_SCOPES };
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
@@ -73,7 +72,7 @@ function base64Url(bytes) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function encodedHeader(value) {
+export function encodedHeader(value) {
   const bytes = new TextEncoder().encode(value);
   return `=?UTF-8?B?${base64Url(bytes)}?=`;
 }
@@ -112,19 +111,27 @@ async function refreshAccessToken(env, refreshToken, fetchImpl) {
 
 export async function sendViaGmail(env, account, message, fetchImpl = fetch) {
   if (!account?.refreshToken) return { ok: false, reason: 'gmail_not_connected', sent: false };
-  if (gmailScopeString().includes('gmail.readonly') || gmailScopeString().includes('gmail.compose')) {
+  if (gmailScopeString().includes('gmail.readonly') || gmailScopeString().includes('gmail.compose') || gmailScopeString().includes('gmail.modify')) {
     return { ok: false, reason: 'scope_refused', sent: false };
   }
   const token = await refreshAccessToken(env, account.refreshToken, fetchImpl);
   if (!token.ok) return { ok: false, reason: token.reason, sent: false };
+  const profile = await fetchImpl(USERINFO_URL, { headers: { authorization: `Bearer ${token.accessToken}` } });
+  const user = await profile.json().catch(() => ({}));
+  const email = String(user.email || '').toLowerCase();
+  const expected = String(message.expectedSender || account.email || '').toLowerCase();
+  if (!profile.ok || !email || email !== expected) return { ok: false, reason: 'sender_mismatch', sent: false };
+  const raw = message.rfc822
+    ? base64Url(new TextEncoder().encode(message.rfc822))
+    : buildRawMessage({ ...message, from: email });
   const response = await fetchImpl(SEND_URL, {
     method: 'POST',
     headers: { authorization: `Bearer ${token.accessToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ raw: buildRawMessage(message) })
+    body: JSON.stringify({ raw })
   });
   if (!response.ok) return { ok: false, reason: 'gmail_send_failed', sent: false };
   const json = await response.json().catch(() => ({}));
-  return { ok: true, sent: true, provider: 'gmail', messageId: json.id || '' };
+  return { ok: true, sent: true, provider: 'gmail', messageId: message.messageId || json.id || '', gmailId: json.id || '' };
 }
 
 export async function exchangeGoogleCode(env, code, fetchImpl = fetch) {
@@ -149,6 +156,9 @@ export async function exchangeGoogleCode(env, code, fetchImpl = fetch) {
   if (env.ALLOWED_GMAIL && !timingSafeEqual(email, String(env.ALLOWED_GMAIL).toLowerCase())) {
     return { ok: false, reason: 'gmail_account_rejected' };
   }
-  await saveGmailAccount(env, { email, refreshToken: json.refresh_token, provider: 'gmail' });
+  let provider = providerOf(email);
+  if (provider === 'other') provider = await detectProvider(domainOf(email), fetchImpl);
+  if (provider !== 'gmail' && provider !== 'workspace') provider = 'workspace';
+  await saveGmailAccount(env, { email, refreshToken: json.refresh_token, provider });
   return { ok: true, email };
 }

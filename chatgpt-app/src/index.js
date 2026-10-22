@@ -8,6 +8,12 @@ import { applyStripeEvent, createCheckoutSession, startTrial, verifyStripeSignat
 import { canonicalUrl, htmlHeaders, json, mcpCorsHeaders, publicOrigin, readForm, sameSitePost, timingSafeEqual } from './http.js';
 import { exchangeGoogleCode } from './gmail.js';
 import { saveIncoming } from './incoming.js';
+import { handleIncomingEmail } from './mail/incoming-email.js';
+import { issueSetupCode } from './mail/links.js';
+import { buildMicrosoftAuthUrl, exchangeMicrosoftCode, msOauthEnabled } from './mail/microsoft.js';
+import { pollAnsweredThreads } from './mail/poll.js';
+import { detectProvider, domainOf, providerOf } from './mail/providers.js';
+import { mailSetup } from './mail/setup.js';
 import { buildGoogleAuthUrl, handleMcpRequest } from './mcp.js';
 import { accessTokenRecord, handleOAuthRoute, wwwAuthenticate } from './mcp-oauth.js';
 import { noticeText, pricePage } from './pages.js';
@@ -113,6 +119,84 @@ async function googleCallback(request, env) {
   return new Response(text, { status: saved.ok ? 200 : 400, headers: { 'content-type': 'text/plain; charset=utf-8' } });
 }
 
+async function msStart(request, env) {
+  if (!msOauthEnabled(env)) {
+    return new Response('Microsoft の送信は無効です。受信の転送だけ使えます。', {
+      status: 404,
+      headers: { 'content-type': 'text/plain; charset=utf-8' }
+    });
+  }
+  const url = new URL(request.url);
+  const adminKey = url.searchParams.get('key') || '';
+  if (!env.OAUTH_ADMIN_KEY || !timingSafeEqual(adminKey, env.OAUTH_ADMIN_KEY) || !env.CHATGPT_KV) {
+    return new Response('forbidden', { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+  const hint = url.searchParams.get('login_hint') || '';
+  const state = crypto.randomUUID();
+  await env.CHATGPT_KV.put(`ms-state:${state}`, hint, { expirationTtl: 600 });
+  return Response.redirect(buildMicrosoftAuthUrl(env, state, hint), 302);
+}
+
+async function msCallback(request, env) {
+  const url = new URL(request.url);
+  const state = url.searchParams.get('state') || '';
+  const code = url.searchParams.get('code') || '';
+  const hint = state && env.CHATGPT_KV ? await env.CHATGPT_KV.get(`ms-state:${state}`) : null;
+  if (hint == null || !code) {
+    return new Response('無効なリクエストです。もう一度接続を開始してください。', {
+      status: 400,
+      headers: { 'content-type': 'text/plain; charset=utf-8' }
+    });
+  }
+  await env.CHATGPT_KV.delete(`ms-state:${state}`);
+  const saved = await exchangeMicrosoftCode(env, code, hint, env.MAIL_FETCH || fetch);
+  const text = saved.ok
+    ? `Microsoft（${saved.email}）を接続しました。このタブは閉じてください。`
+    : 'Microsoft の接続に失敗しました。送信はしていません。';
+  return new Response(text, { status: saved.ok ? 200 : 400, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+}
+
+async function issueMailSetup(request, env) {
+  const url = new URL(request.url);
+  const adminKey = url.searchParams.get('key') || '';
+  if (!env.OAUTH_ADMIN_KEY || !timingSafeEqual(adminKey, env.OAUTH_ADMIN_KEY) || !env.CHATGPT_KV) {
+    return new Response('forbidden', { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+  const address = url.searchParams.get('address') || '';
+  let provider = providerOf(address);
+  if (provider === 'other') provider = await detectProvider(domainOf(address), env.MAIL_FETCH || fetch);
+  if (provider === 'gmail' || provider === 'workspace') {
+    return new Response('このアドレスは Gmail の接続を使います。/oauth/google/start を開いてください。', {
+      status: 400,
+      headers: { 'content-type': 'text/plain; charset=utf-8' }
+    });
+  }
+  if (provider === 'microsoft' && !msOauthEnabled(env)) {
+    return new Response('Microsoft の送信は無効です。受信の転送だけ使えます。', {
+      status: 400,
+      headers: { 'content-type': 'text/plain; charset=utf-8' }
+    });
+  }
+  if (provider === 'microsoft') {
+    return new Response('Microsoft は OAuth で接続します。/auth/ms/start を開いてください。', {
+      status: 400,
+      headers: { 'content-type': 'text/plain; charset=utf-8' }
+    });
+  }
+  const issued = await issueSetupCode(env, {
+    address,
+    provider,
+    kind: url.searchParams.get('kind') || 'operator',
+    owner: url.searchParams.get('owner') || address
+  });
+  if (!issued.ok) {
+    return new Response('メールアドレスを確認してください。', { status: 400, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
+  return new Response(`接続ページ（10分、5回まで）:\n${publicOrigin(request)}/auth/mail-app/setup?c=${issued.code}\n`, {
+    headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 async function incomingForward(request, env) {
   const header = request.headers.get('x-incoming-token') || '';
   if (!env.INCOMING_FORWARD_TOKEN || !timingSafeEqual(header, env.INCOMING_FORWARD_TOKEN)) {
@@ -141,6 +225,10 @@ export default {
     if (oauth) return oauth;
     if (url.pathname === '/oauth/google/start' && request.method === 'GET') return googleStart(request, env);
     if (url.pathname === '/oauth/google/callback' && request.method === 'GET') return googleCallback(request, env);
+    if (url.pathname === '/auth/ms/start' && request.method === 'GET') return msStart(request, env);
+    if (url.pathname === '/auth/ms/callback' && request.method === 'GET') return msCallback(request, env);
+    if (url.pathname === '/auth/mail-app/issue' && request.method === 'GET') return issueMailSetup(request, env);
+    if (url.pathname === '/auth/mail-app/setup' && (request.method === 'GET' || request.method === 'POST')) return mailSetup(request, env);
     if (url.pathname === '/incoming/forward' && request.method === 'POST') return incomingForward(request, env);
     if (url.pathname === '/mcp') return mcpEntry(request, env);
     if (url.pathname === '/price/' && request.method === 'GET') {
@@ -164,5 +252,17 @@ export default {
     }
     if (url.pathname === '/' && request.method === 'GET') return redirect(`${publicOrigin(request)}/price/`, 308);
     return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  },
+  async email(message, env) {
+    try {
+      await handleIncomingEmail(message, env);
+    } catch (error) {
+      console.error('email', error && error.message);
+    }
+  },
+  async scheduled(_event, env, ctx) {
+    const pending = pollAnsweredThreads(env).catch(() => {});
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(pending);
+    else await pending;
   }
 };

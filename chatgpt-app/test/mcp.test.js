@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
-import { WIRED_PROVIDERS } from '../src/providers.js';
+import { providerOf, PROVIDER_IDS, sendPath } from '../src/providers.js';
 import { PATENT_LABEL } from '../src/reply.js';
 import { envWithKv } from './helpers.js';
 
@@ -299,28 +299,52 @@ await test('作成カードは宛先と件名と未送信の本文を返す', as
 
 await test('送信はカードの承認と状態の再確認が揃ったときだけ', async () => {
   const calls = [];
+  let raw = '';
   const env = {
     ...envWithKv(),
     GOOGLE_CLIENT_SECRET: 'secret',
-    GMAIL_FETCH: async (url) => {
+    GMAIL_FETCH: async (url, init) => {
       calls.push(String(url));
       if (String(url).includes('oauth2.googleapis.com')) {
         return new Response(JSON.stringify({ access_token: 'access' }), { status: 200 });
       }
+      if (String(url).includes('userinfo')) {
+        return new Response(JSON.stringify({ email: 'owner@example.com' }), { status: 200 });
+      }
+      raw = init && init.body ? JSON.parse(init.body).raw : '';
       return new Response(JSON.stringify({ id: 'msg-1' }), { status: 200 });
     }
   };
-  const proposed = await rpc(env, 'tools/call', {
-    name: 'propose_replies',
-    arguments: { sender: 'sato@example.com', subject: '納期の確認', body: '来週の納期を教えてください。', deskId: 'desk-send-01' }
-  });
-  const data = proposed.body.result.structuredContent;
-  const nonce = proposed.body.result._meta.sendNonce;
   await env.CHATGPT_KV.put('gmail-primary', 'owner@example.com');
   await env.CHATGPT_KV.put(
     'gmail-account:owner@example.com',
     JSON.stringify({ email: 'owner@example.com', refreshToken: 'refresh', provider: 'gmail' })
   );
+  const posted = await worker.fetch(
+    new Request('https://example.com/incoming/forward', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-incoming-token': 'forward-token' },
+      body: JSON.stringify({
+        from: 'sato@example.com',
+        to: 'owner@example.com',
+        owner: 'owner@example.com',
+        subject: '納期の確認',
+        body: '来週の納期を教えてください。',
+        message_id: '<desk-send-01@example.com>'
+      })
+    }),
+    { ...env, INCOMING_FORWARD_TOKEN: 'forward-token' }
+  );
+  const incoming = await posted.json();
+  const proposed = await rpc(env, 'tools/call', {
+    name: 'propose_replies',
+    arguments: { incomingId: incoming.item.id, deskId: 'desk-send-01' }
+  });
+  const data = proposed.body.result.structuredContent;
+  const nonce = proposed.body.result._meta.sendNonce;
+  assert.equal(data.compose.to, 'sato@example.com');
+  assert.equal(data.compose.providerLabel, 'Gmail');
+  assert.equal(data.compose.from, 'owner@example.com');
   const blocked = await rpc(env, 'tools/call', {
     name: 'send_reply',
     arguments: { snapshotId: data.snapshotId, to: data.compose.to, subject: data.compose.subject, body: data.compose.body, userApproved: true }
@@ -352,14 +376,18 @@ await test('送信はカードの承認と状態の再確認が揃ったとき�
       userApproved: true,
       reconfirmed: true,
       from: 'owner@example.com',
-      to: data.compose.to,
+      to: 'evil@example.com',
       subject: data.compose.subject,
       body: `${data.compose.body}\n追記`
     }
   });
   assert.equal(sent.body.result.structuredContent.sent, true);
   assert.equal(sent.body.result.structuredContent.providerMessageId, 'msg-1');
-  assert.equal(calls.some((url) => url.includes('gmail.readonly')), false);
+  assert.equal(calls.some((url) => String(url).includes('userinfo')), true);
+  assert.equal(calls.some((url) => String(url).includes('gmail.readonly')), false);
+  const decoded = Buffer.from(String(raw).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+  assert.match(decoded, /To: sato@example.com/);
+  assert.equal(decoded.includes('evil@example.com'), false);
 });
 
 await test('下書きはアプリに残り、Gmail には送らない', async () => {
@@ -393,10 +421,12 @@ await test('転送メールは受信一覧に出て、送信前に取り直す',
   });
   const data = proposed.body.result.structuredContent;
   assert.equal(data.compose.to, 'sato@example.com');
-  await env.CHATGPT_KV.put(
-    `incoming:${incoming.item.id}`,
-    JSON.stringify({ ...incoming.item, body: '別の本文', hash: 'changed' })
-  );
+  const storedKey = `email-thread:${incoming.item.id}`;
+  const stored = JSON.parse(await env.CHATGPT_KV.get(storedKey));
+  assert.equal(stored.body, undefined);
+  assert.ok(stored.quote_text);
+  stored.recipient_hash = 'changed';
+  await env.CHATGPT_KV.put(storedKey, JSON.stringify(stored));
   const blocked = await rpc(env, 'tools/call', {
     name: 'send_reply',
     arguments: {
@@ -430,10 +460,17 @@ await test('MCP の発見情報と Gmail の同意 URL', async () => {
   assert.equal(location.includes('gmail.compose'), false);
   assert.equal(location.includes('gmail.modify'), false);
   assert.match(location, /reply\.kimitotalk\.link%2Foauth%2Fgoogle%2Fcallback/);
-  assert.deepEqual(WIRED_PROVIDERS.map((provider) => provider.id), ['gmail', 'email_routing']);
-  assert.equal(WIRED_PROVIDERS.find((provider) => provider.id === 'gmail').outbound, true);
-  assert.equal(WIRED_PROVIDERS.find((provider) => provider.id === 'email_routing').inbound, true);
-  assert.equal(WIRED_PROVIDERS.find((provider) => provider.id === 'email_routing').outbound, false);
+  assert.match(location, /scope=openid\+email\+/);
+  assert.equal(location.includes('userinfo.email'), false);
+  assert.deepEqual(PROVIDER_IDS, [
+    'gmail', 'workspace', 'microsoft', 'icloud', 'yahoojp', 'yahoo', 'docomo', 'softbank',
+    'isoftbank', 'au', 'ocn', 'biglobe', 'sonet', 'nifty', 'zoho', 'other'
+  ]);
+  assert.equal(providerOf('owner@gmail.com'), 'gmail');
+  assert.equal(sendPath('gmail'), 'google');
+  assert.equal(sendPath('icloud'), 'password');
+  assert.equal(sendPath('microsoft', {}), 'forward_only');
+  assert.equal(sendPath('microsoft', { MS_OAUTH_ENABLED: '1', MS_CLIENT_ID: 'id', MS_CLIENT_SECRET: 'secret' }), 'password');
 });
 
 if (fail > 0) {

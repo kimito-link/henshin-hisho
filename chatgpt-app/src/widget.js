@@ -23,6 +23,13 @@ const REASONS = {
   gmail_not_configured: 'Gmail の秘密情報が未設定です。送信はしていません。',
   gmail_refresh_failed: 'Gmail の接続を更新できませんでした。送信はしていません。',
   gmail_send_failed: 'Gmail が送信を受け付けませんでした。メールは未送信です。',
+  mail_not_connected: '差出人が未連携です。接続してから、もう一度カードを開いてください。送信はしていません。',
+  thread_required: '送信先は、転送で届いたメールの記録からだけ取ります。この下書きには受信記録が無いので送っていません。',
+  smtp_uncertain: 'サーバーとの接続が送信の途中で切れました。届いたかどうか確定できないので、再送はしません。送信済みフォルダを確認してください。',
+  smtp_auth_failed: 'メールのログインに失敗しました。接続をやり直してください。送信はしていません。',
+  smtp_failed: 'メールサーバが送信を受け付けませんでした。メールは未送信です。',
+  sender_mismatch: '接続中のアカウントが差出人と違うので、送っていません。',
+  invalid_server: 'メールサーバの指定を確認してください。送信はしていません。',
   channel_not_email: 'このカードが送れるのはメールだけです。LINE や Chatwork はここから送りません。',
   llm_not_configured: 'LLM は未接続のため、定型文にしています。',
   llm_unavailable: 'LLM を使えなかったため、定型文にしています。',
@@ -71,7 +78,8 @@ export const WIDGET_HTML = `<!doctype html>
   .paste { margin-top: 12px; }
   .paste textarea { min-height: 5rem; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .status, .patent, .note { color: var(--muted); font-size: .85rem; }
+  .status, .patent, .note, .fromline { color: var(--muted); font-size: .85rem; }
+  .fromline { color: var(--ink); font-size: 1rem; margin: 0; }
   .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 650; margin: 8px 0; }
   [hidden] { display: none !important; }
   :focus-visible { outline: 3px solid #1d4ed8; outline-offset: 2px; }
@@ -90,8 +98,10 @@ export const WIDGET_HTML = `<!doctype html>
     </div>
     <div id="candidateChips" class="chips"></div>
     <p id="emotionCaption" class="note">相手の気持ちは、候補を押すと本文へ入ります。点数は予測です。</p>
-    <label class="row"><span>差出人</span><input id="composeFrom" type="text" autocomplete="email" placeholder="接続したアカウント" /></label>
-    <p id="providerLine" class="note"></p>
+    <div class="row"><span>差出人</span><p id="composeFromText" class="fromline">未連携</p></div>
+    <p id="providerLine" class="note" hidden></p>
+    <button id="connectLink" class="quiet" type="button" hidden>接続する</button>
+    <input id="composeFrom" type="hidden" />
     <label class="row"><span>宛先</span><input id="composeTo" type="email" autocomplete="email" placeholder="相手のメールアドレス" /></label>
     <details>
       <summary>Cc / Bcc</summary>
@@ -207,6 +217,7 @@ if (embedded && window.ResizeObserver) {
 function setBusy(value) {
   busy = value;
   ['sendButton', 'draftButton', 'copyButton', 'proposeButton', 'confirmButton', 'shioriButton'].forEach((id) => { $(id).disabled = value; });
+  if (view.blockSend) $('sendButton').disabled = true;
 }
 function setStatus(text) { $('statusLine').textContent = text || ''; }
 function composeFromForm() {
@@ -228,8 +239,14 @@ function fillCompose(compose) {
   $('composeSubject').value = compose.subject || '';
   $('composeBody').value = compose.body || '';
   $('cardTitle').textContent = compose.subject || '返信';
-  const provider = compose.providerLabel ? compose.providerLabel + (compose.from ? ' · ' + compose.from : '') : '';
+  const linked = compose.linked !== false && (compose.providerLabel || compose.from);
+  const provider = linked
+    ? (compose.providerLabel ? compose.providerLabel + (compose.from ? ' · ' + compose.from : '') : compose.from)
+    : '未連携';
+  $('composeFromText').textContent = provider;
   $('providerLine').textContent = provider;
+  $('connectLink').hidden = linked;
+  if (!linked && compose.connectUrl) $('connectLink').dataset.href = compose.connectUrl;
 }
 function fillIncoming(args) {
   if (!args) return;
@@ -309,8 +326,9 @@ function applyResult(result) {
   if (data.priceUrl) priceUrl = data.priceUrl;
   const next = { ...data };
   if (!Object.prototype.hasOwnProperty.call(data, 'candidates')) delete next.candidates;
-  if (data.snapshotId && data.snapshotId !== view.snapshotId) {
-    view = { ...view, ...next, reconfirm: false };
+  const previousSnapshot = view.snapshotId;
+  if (data.snapshotId && data.snapshotId !== previousSnapshot) {
+    view = { ...view, ...next, reconfirm: false, blockSend: false };
     fillCompose(data.compose);
   } else {
     view = { ...view, ...next };
@@ -318,6 +336,7 @@ function applyResult(result) {
   }
   if (data.reconfirm) view.reconfirm = true;
   if (data.sent === true) view.sent = true;
+  if (data.uncertain === true) view.blockSend = true;
   $('handoffLine').textContent = data.handoff || view.handoff || '';
   const reference = view.reference;
   $('referenceLine').textContent = reference && reference.refersToPrevious
@@ -344,7 +363,8 @@ async function run(name, args, pendingLabel) {
     const result = await callTool(name, args);
     applyResult(result || {});
     const data = (result && result.structuredContent) || {};
-    if (data.sent === true) setStatus('送信しました。');
+    if (data.uncertain === true) setStatus(reasons.smtp_uncertain);
+    else if (data.sent === true) setStatus('送信しました。');
     else if (data.reason && reasons[data.reason]) setStatus(reasons[data.reason]);
     else if (data.classification === 'notice') setStatus('通知として振り分けました。このメールは未送信です。');
     else if (name === 'save_compose_draft' && data.ok) setStatus('下書きをアプリに保存しました。このメールは未送信です。');
@@ -382,6 +402,11 @@ $('copyButton').addEventListener('click', async () => {
   $('copyOut').value = text;
   try { await navigator.clipboard.writeText(text); setStatus('本文をコピーしました。このメールは未送信です。'); }
   catch (error) { setStatus('コピーは端末に拒否されました。このメールは未送信です。'); }
+});
+$('connectLink').addEventListener('click', () => {
+  const href = $('connectLink').dataset.href || '/auth/mail-app/setup';
+  if (window.openai && window.openai.openExternal) window.openai.openExternal({ href });
+  else window.open(href, '_blank', 'noopener');
 });
 $('openButton').addEventListener('click', () => {
   const href = view.provider === 'gmail' || (view.compose && view.compose.provider === 'gmail') ? 'https://mail.google.com/mail/' : priceUrl;

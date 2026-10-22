@@ -1,7 +1,9 @@
 import { billingView, consumeGeneration, PRICE_YEN, startTrial } from './billing.js';
 import { buildCompose, compareSendState, fallbackText } from './compose.js';
 import { generateCandidates } from './drafts.js';
-import { buildGoogleAuthUrl, readGmailAccount, readPrimaryGmailAccount, sendViaGmail } from './gmail.js';
+import { buildGoogleAuthUrl } from './gmail.js';
+import { deliverReply, resolveReplySender, senderFields } from './mail/send.js';
+import { threadRecipients } from './mail/threads.js';
 import { mcpCorsHeaders, publicOrigin, validDeskId } from './http.js';
 import { getIncoming, listIncoming } from './incoming.js';
 import { applyInstruction, assessMessage, buildCandidates, compareSnapshot, handoffFor, PATENT_LABEL, reviewConfirmation } from './reply.js';
@@ -110,7 +112,7 @@ const TOOLS = [
     name: 'send_reply',
     title: '作成カードから送信する',
     description:
-      'カードの「送信」を押したときだけ、接続済みの Gmail（gmail.send）で送る。直前に受信状態と宛先を取り直し、違えば送らず再確認を求める。モデルからは呼ばない。',
+      'カードの「送信」を押したときだけ送る。差出人が Gmail / Workspace なら Gmail API、それ以外の接続済みアドレスなら SMTP。宛先は保存した受信スレッドだけを使い、直前に取り直す。違えば送らず再確認を求める。モデルからは呼ばない。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -158,7 +160,7 @@ function messageSchema() {
     properties: {
       sender: { type: 'string', description: '相手の名前またはメールアドレス' },
       to: { type: 'string', description: '宛先。空なら相手のメールアドレスを使う' },
-      from: { type: 'string', description: '差出人。空なら接続済みの Gmail' },
+      from: { type: 'string', description: '表示用。送信時の差出人は接続済みアカウントから決める' },
       cc: { type: 'string' },
       bcc: { type: 'string' },
       subject: { type: 'string', description: '相手の件名。返信では Re: を付ける' },
@@ -204,8 +206,20 @@ async function present(env, input, origin, extra = {}) {
   const assessment = assessMessage(desk);
   const billing = extra.billing || (await billingView(env, desk.email));
   const shiori = await listShiori(env, desk);
-  const account = await readPrimaryGmailAccount(env);
-  const compose = extra.compose || buildCompose(desk, extra.reference || {}, account);
+  const thread = extra.incoming || null;
+  let compose = extra.compose;
+  if (!compose) {
+    compose = buildCompose(desk, extra.reference || {});
+    if (thread) {
+      const recipients = threadRecipients(thread);
+      compose.to = recipients.to || thread.from || compose.to;
+      compose.cc = recipients.cc;
+      compose.bcc = recipients.bcc;
+      compose.threadId = thread.id || '';
+      compose.incomingId = thread.id || '';
+    }
+    Object.assign(compose, senderFields(await resolveReplySender(env, { thread, origin }), origin));
+  }
   const payload = {
     ok: extra.ok !== false,
     reason: extra.reason || '',
@@ -250,7 +264,11 @@ async function prepareInput(env, input) {
       if (!source.sender) source.sender = incoming.from;
       if (!source.subject) source.subject = incoming.subject;
       if (!source.body) source.body = incoming.body;
-      if (!source.to) source.to = incoming.from;
+      const recipients = threadRecipients(incoming);
+      source.to = recipients.to || incoming.from;
+      source.cc = recipients.cc;
+      source.bcc = recipients.bcc;
+      source.incomingId = incoming.id;
     }
   }
   return { ...prepared, input: source, incoming };
@@ -270,6 +288,8 @@ async function storeSnapshot(env, assessment, candidates, compose, incoming) {
     body: compose.body,
     incomingId: incoming?.id || '',
     incomingHash: incoming?.hash || '',
+    threadId: incoming?.id || '',
+    threadHash: incoming?.hash || '',
     sendNonce
   };
   if (!candidates.length) return { snapshotId: '', stateCheck: 'not_needed', sendNonce: '' };
@@ -338,8 +358,16 @@ async function callTool(env, name, args, origin) {
     const generated = gate.ok
       ? await generateCandidates(env, assessment)
       : { candidates: buildCandidates(assessment), draftSource: 'template', draftReason: gate.reason };
-    const account = await readPrimaryGmailAccount(env);
-    const compose = buildCompose(source, prepared.reference, account);
+    const compose = buildCompose(source, prepared.reference);
+    if (prepared.incoming) {
+      const recipients = threadRecipients(prepared.incoming);
+      compose.to = recipients.to || prepared.incoming.from || compose.to;
+      compose.cc = recipients.cc;
+      compose.bcc = recipients.bcc;
+      compose.threadId = prepared.incoming.id;
+      compose.incomingId = prepared.incoming.id;
+    }
+    Object.assign(compose, senderFields(await resolveReplySender(env, { thread: prepared.incoming, origin }), origin));
     compose.body = generated.candidates[0]?.text || '';
     const snapshot = await storeSnapshot(env, assessment, generated.candidates, compose, prepared.incoming);
     const payload = await present(env, source, origin, {
@@ -369,7 +397,8 @@ async function callTool(env, name, args, origin) {
       return toolResult(payload);
     }
     const id = crypto.randomUUID();
-    const compose = buildCompose(input, {}, await readPrimaryGmailAccount(env));
+    const compose = buildCompose(input, {});
+    Object.assign(compose, senderFields(await resolveReplySender(env, { origin }), origin));
     compose.body = String(input.body || '').slice(0, 4000);
     compose.subject = String(input.subject || compose.subject).slice(0, 200);
     await env.CHATGPT_KV.put(`app-draft:${id}`, JSON.stringify({ id, compose, at: Date.now() }));
@@ -384,61 +413,54 @@ async function callTool(env, name, args, origin) {
       return toolResult(payload);
     }
     const snapshot = await loadSnapshot(env, input.snapshotId);
-    const incoming = snapshot?.incomingId ? await getIncoming(env, snapshot.incomingId) : null;
-    const compared = compareSendState(snapshot, incoming, input);
+    const thread = snapshot?.threadId ? await getIncoming(env, snapshot.threadId) : null;
+    const compared = compareSendState(snapshot, thread, input);
+    const sender = await resolveReplySender(env, { thread, origin });
+    const recipients = threadRecipients(thread);
+    const compose = {
+      ...senderFields(sender, origin),
+      to: recipients.to,
+      cc: recipients.cc,
+      bcc: recipients.bcc,
+      subject: input.subject || snapshot?.subject || '',
+      body: input.body || snapshot?.body || '',
+      threadId: thread?.id || '',
+      incomingId: thread?.id || ''
+    };
     if (!compared.ok) {
       const payload = await present(env, input, origin, {
         ok: false,
         reason: compared.reason,
         reconfirm: compared.reason === 'state_mismatch',
         sent: false,
-        compose: {
-          from: input.from || '',
-          to: input.to || '',
-          cc: input.cc || '',
-          bcc: input.bcc || '',
-          subject: input.subject || '',
-          body: input.body || '',
-          provider: 'gmail',
-          providerLabel: 'Gmail'
-        }
+        incoming: thread,
+        compose
       });
       return toolResult(payload);
     }
     if (snapshot.riskLevel === 'high' && input.riskAcknowledged !== true) {
-      const payload = await present(env, input, origin, { ok: false, reason: 'risk_acknowledgement_required', sent: false });
+      const payload = await present(env, input, origin, { ok: false, reason: 'risk_acknowledgement_required', sent: false, compose });
       return toolResult(payload);
     }
-    const from = String(input.from || '').trim().toLowerCase();
-    const account = (await readGmailAccount(env, from)) || (await readPrimaryGmailAccount(env));
-    if (account && from && account.email !== from) {
-      const payload = await present(env, input, origin, { ok: false, reason: 'gmail_not_connected', sent: false });
+    if (!sender.linked) {
+      const payload = await present(env, input, origin, { ok: false, reason: 'mail_not_connected', sent: false, incoming: thread, compose });
       return toolResult(payload);
     }
-    const sent = await sendViaGmail(env, account, {
-      from: account?.email || from,
-      to: input.to,
-      cc: input.cc,
-      bcc: input.bcc,
-      subject: input.subject,
-      body: input.body
-    }, env.GMAIL_FETCH || fetch);
+    const sent = await deliverReply(env, {
+      sender,
+      thread,
+      subject: input.subject || snapshot.subject,
+      body: input.body ?? snapshot.body
+    });
     const payload = await present(env, input, origin, {
       ok: sent.ok,
       reason: sent.ok ? '' : sent.reason,
       sent: sent.sent === true,
-      compose: {
-        from: account?.email || from,
-        provider: 'gmail',
-        providerLabel: 'Gmail',
-        to: input.to || '',
-        cc: input.cc || '',
-        bcc: input.bcc || '',
-        subject: input.subject || '',
-        body: input.body || ''
-      }
+      incoming: thread,
+      compose: { ...compose, subject: input.subject || snapshot.subject, body: input.body ?? snapshot.body }
     });
-    if (sent.messageId) payload.providerMessageId = sent.messageId;
+    payload.uncertain = sent.uncertain === true;
+    if (sent.gmailId || sent.messageId) payload.providerMessageId = sent.gmailId || sent.messageId;
     return toolResult(payload);
   }
   if (name === 'confirm_candidate') {

@@ -1,5 +1,4 @@
 import { clip, normalizeEmail } from './http.js';
-import { providerById } from './providers.js';
 
 export async function digest(text) {
   const bytes = new TextEncoder().encode(String(text || ''));
@@ -23,25 +22,31 @@ export function resolveRecipient(input = {}, reference = {}) {
   return previous;
 }
 
-export function buildCompose(input = {}, reference = {}, account = null) {
-  const provider = providerById(account?.provider || 'gmail');
-  const from = normalizeEmail(input.from || account?.email || '');
+export function buildCompose(input = {}, reference = {}) {
   return {
-    from,
-    provider: account?.email ? provider?.id || '' : '',
-    providerLabel: account?.email ? provider?.label || '' : '',
+    from: normalizeEmail(input.from || ''),
+    provider: '',
+    providerLabel: '',
+    linked: false,
+    connectUrl: '',
+    transport: '',
     to: resolveRecipient(input, reference),
     cc: normalizeEmail(input.cc || ''),
     bcc: normalizeEmail(input.bcc || ''),
     subject: replySubject(input.subject),
     body: '',
-    incomingId: clip(input.incomingId, 80)
+    incomingId: clip(input.incomingId, 80),
+    threadId: clip(input.incomingId, 80)
   };
 }
 
 export function fallbackText(payload = {}) {
   const compose = payload.compose || {};
-  const who = compose.providerLabel ? `${compose.from || ''}（${compose.providerLabel}）` : compose.from || '';
+  const who = compose.linked === false
+    ? '未連携'
+    : compose.providerLabel
+      ? `${compose.providerLabel} · ${compose.from || ''}`
+      : compose.from || '';
   const lines = [
     payload.sent === true ? '送信しました。' : 'このメールは未送信です。',
     `差出人: ${who}`,
@@ -61,21 +66,25 @@ export function fallbackText(payload = {}) {
   return lines.filter((line) => line !== '').join('\n');
 }
 
-/** 送信直前に、保存した宛先・件名と、受信レコードのハッシュを取り直して比べる。 */
-export function compareSendState(snapshot, incoming, request = {}) {
+/** 送信直前に、保存した件名と、スレッドの宛先ハッシュを取り直す。宛先はスレッドの記録だけを使う。 */
+export function compareSendState(snapshot, thread, request = {}) {
   if (!snapshot || snapshot.sendNonce !== request.sendNonce) return { ok: false, reason: 'approval_required' };
   if (request.userApproved !== true) return { ok: false, reason: 'approval_required' };
-  if (snapshot.incomingId) {
-    if (!incoming || incoming.id !== snapshot.incomingId || incoming.hash !== snapshot.incomingHash) {
-      return { ok: false, reason: 'state_mismatch' };
-    }
-  }
-  const same =
-    (request.to || '') === (snapshot.to || '') &&
-    (request.cc || '') === (snapshot.cc || '') &&
-    (request.bcc || '') === (snapshot.bcc || '') &&
-    (request.subject || '') === (snapshot.subject || '') &&
-    (request.body || '') === (snapshot.body || '');
-  if (!same && request.reconfirmed !== true) return { ok: false, reason: 'state_mismatch' };
+  if (!snapshot.threadId) return { ok: false, reason: 'thread_required' };
+  if (!thread || thread.id !== snapshot.threadId) return { ok: false, reason: 'state_mismatch' };
+  const hash = thread.recipient_hash || thread.hash || '';
+  const savedHash = snapshot.threadHash || snapshot.incomingHash || '';
+  if (hash !== savedHash && request.reconfirmed !== true) return { ok: false, reason: 'state_mismatch' };
+  const recipients = {
+    to: thread.reply_to_address || thread.from_address || thread.to || '',
+    cc: thread.cc_address || '',
+    bcc: thread.bcc_address || ''
+  };
+  const typedSame =
+    String(request.to || '') === recipients.to &&
+    String(request.cc || '') === recipients.cc &&
+    String(request.bcc || '') === recipients.bcc;
+  const draftSame = String(request.subject || '') === String(snapshot.subject || '') && String(request.body || '') === String(snapshot.body || '');
+  if ((!typedSame || !draftSame) && request.reconfirmed !== true) return { ok: false, reason: 'state_mismatch' };
   return { ok: true };
 }

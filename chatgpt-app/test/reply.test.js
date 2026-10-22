@@ -53,7 +53,12 @@ await test('出願番号は指定の文字列だけ', async () => {
     'docs/MCP-APP.md',
     'chatgpt-app/src/widget.js',
     'chatgpt-app/src/gmail.js',
-    'chatgpt-app/src/providers.js'
+    'chatgpt-app/src/providers.js',
+    'chatgpt-app/src/mail/providers.js',
+    'chatgpt-app/src/mail/smtp.js',
+    'chatgpt-app/src/mail/imap.js',
+    'chatgpt-app/src/mail/send.js',
+    'chatgpt-app/src/incoming.js'
   ]) {
     assert.equal(readFileSync(join(root, relative), 'utf8').includes('22026'), false, relative);
   }

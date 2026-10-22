@@ -15,11 +15,20 @@ compatibility_date = "2026-10-22"
 #   npx wrangler secret put INCOMING_FORWARD_TOKEN
 #   npx wrangler secret put MCP_OAUTH_CONSENT_KEY
 #   npx wrangler secret put INTERNAL_DRAFT_TOKEN
-# Gmail のクライアント ID は linebot と同じ公開値。スコープは gmail.send だけ。
+#   npx wrangler secret put MAIL_TOKEN_ENCRYPTION_KEY
+#   npx wrangler secret put MS_CLIENT_ID
+#   npx wrangler secret put MS_CLIENT_SECRET
+# Gmail のクライアント ID は linebot と同じ公開値。スコープは gmail.send + openid + email。
+# 受信は Email Routing が email() に渡す。send_email バインディングは使わない。
+# Microsoft の送信を有効にするときは vars に MS_OAUTH_ENABLED = "1" を足す。
+# 送信済みの返信検出を動かすときは次を足す。
+# [triggers]
+# crons = ["*/15 * * * *"]
 
 [vars]
 GOOGLE_CLIENT_ID = "899798982543-2jk3d2fp97c02js71opg7l1j9fa7oh5a.apps.googleusercontent.com"
 GOOGLE_REDIRECT_URI = "https://reply.kimitotalk.link/oauth/google/callback"
+WORKER_PUBLIC_URL = "https://reply.kimitotalk.link"
 
 [observability]
 enabled = true

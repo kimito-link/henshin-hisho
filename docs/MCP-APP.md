@@ -24,18 +24,40 @@ MIME は、安定版の MCP Apps（2026-01-26、`io.modelcontextprotocol/ui`）�
 
 ## プロバイダ
 
-`kimito-link/linebot` はこの環境の GitHub トークンから読めませんでした（リポジトリは非公開で 404）。公開プロフィールにはリポジトリ名 `linebot` があります。ソースを見ずに設定名を作っていないので、オーナーが確定した経路だけを接続しています。
+受信は、どのプロバイダも同じです。利用者が自分のメールを `notify@kimitotalk.link` へ自動転送し、Cloudflare Email Routing がこの Worker の `email()` に渡します。`handleIncomingEmail` が PostalMime で解析し、`x-forwarded-for` のアドレスを転送した本人として `email_threads` に残します。保存するのは message-id、宛先、件名、短い引用だけです。本文は保存しません。`email()` は例外を外に出さないので、失敗してもバウンスしません。
 
-| 経路 | linebot での根拠 | このアプリ |
+送信は二つだけです。
+
+1. Gmail と Google Workspace は Gmail API の `users.messages.send` です。スコープは `https://www.googleapis.com/auth/gmail.send`、`openid`、`email` です。送る直前に userinfo で差出人を取り直し、接続したアドレスと違うときは送りません。
+2. それ以外は、Workers の `cloudflare:sockets` で話す自前の SMTP です。587 は STARTTLS、465 は最初から TLS です。パスワードが `oauth2:` で始まるときは AUTH XOAUTH2、そうでなければ AUTH PLAIN です。送れたあとに IMAP で利用者の送信済みへ APPEND し、Message-ID を `sent_ids` に足します。DATA のあとで接続が切れたときは、届いたか分からないので再送しません。カードにもその旨を出し、再送ボタンは出しません。
+
+使わないもの: Cloudflare の `send_email` バインディング（確認済み宛先にしか送れない）、`message.reply()`、Resend、MailChannels、Microsoft Graph の sendMail。
+
+差出人は利用者が選びません。アドレスのドメインで決め、決まらないときだけ Cloudflare DoH の MX を見ます。結果は `mail_app_links.provider` に保存します。カードの差出人行は「プロバイダ名 · アドレス」です。未接続なら「未連携」と接続リンクです。
+
+| プロバイダ | 送信 | サーバ |
 | --- | --- | --- |
-| Gmail 送信 | オーナー指定。プロジェクト `kimito-talk-oauth`、クライアント ID `899798982543-2jk3d2fp97c02js71opg7l1j9fa7oh5a.apps.googleusercontent.com`、スコープは `gmail.send` + `openid` + `userinfo.email` だけ | 接続済み。差出人に「Gmail」とアドレスを出す。送信は `users/messages/send` |
-| Cloudflare Email Routing への転送（受信） | オーナー指定。受信は Gmail API では読まず、自動転送で届く（linebot の `packages/db/src/email-threads.ts`） | 接続済み。`POST /incoming/forward` で取り込み、`list_incoming` / `get_incoming` に出す |
-| 貼り付け | このアプリの既存の入力 | 接続済み。`propose_replies` |
-| Outlook / Microsoft Graph、SMTP、IMAP、Resend、Cloudflare `send_email` での送信 | ソースが読めず、設定名を確認できなかった | 未接続。確認できてから、同じ設定名でプロバイダを足す |
+| Gmail | Gmail API | アプリパスワードは使わない |
+| Google Workspace | Gmail API（MX が `aspmx.l.google.com`） | 同上 |
+| iCloud | SMTP | `smtp.mail.me.com:587` STARTTLS / `imap.mail.me.com:993`。アプリパスワード |
+| Microsoft | OAuth が有効なときだけ SMTP XOAUTH2。無効なら受信だけ | `smtp.office365.com:587` STARTTLS / `outlook.office365.com:993` |
+| Yahoo!メール | SMTP | `smtp.mail.yahoo.co.jp:465` / `imap.mail.yahoo.co.jp:993` |
+| Yahoo | SMTP | `smtp.mail.yahoo.com:465` / `imap.mail.yahoo.com:993` |
+| ドコモメール | SMTP | `smtp.spmode.ne.jp:465` / `imap.spmode.ne.jp:993`。ログイン名はメールアドレスではなく dアカウント ID |
+| ソフトバンク（@softbank.ne.jp） | SMTP | `smtp.softbank.ne.jp:465` / `imap.softbank.ne.jp:993`（[持ち運び設定](https://www.softbank.jp/mobile/service/mail-address-portability/mms/)） |
+| Eメール(i)（@i.softbank.jp） | SMTP | `smtp.softbank.jp:465` / `imap.softbank.jp:993`（[持ち運び設定](https://www.softbank.jp/mobile/service/mail-address-portability/email-i/)） |
+| OCN | SMTP | `smtp.ocn.ne.jp:465` / `imap.ocn.ne.jp:993`（[OCN の設定](https://support.ocn.ne.jp/personal/purpose/detail/pid2990021006/)） |
+| BIGLOBE | SMTP | `mail.biglobe.ne.jp` の SMTP 465 / IMAP 993（[BIGLOBE](https://support.biglobe.ne.jp/settei/mailer/imap.html)） |
+| So-net | SMTP | `mail.so-net.ne.jp:587` STARTTLS / `imap.so-net.ne.jp:993`（[So-net](https://support.so-net.ne.jp/fa/faq/web/knowledge1687.html)）。IMAP は申し込みが必要 |
+| @nifty | SMTP | `smtp.nifty.com:465` / `imap.nifty.com:993`（[@nifty](https://mail.nifty.com/cs/mail-faq/detail/200326000044/)）。送信済みは `Sent`。新規 IMAP は[接続許可](https://mail.nifty.com/cs/mail-info/detail/sg-2nwnbi/)が必要 |
+| Zoho | SMTP | `smtp.zoho.com:465` / `imap.zoho.com:993` |
+| au、その他 | 入力されたサーバだけ | ポートは 465 か 587。IP アドレスは拒否する |
+
+宛先は、保存したスレッドの Reply-To か From だけを使います。カードやプロンプトに書かれた宛先では送りません。送信の直前に、その宛先のハッシュと件名、本文を取り直します。違えば一度止め、もう一度「送信」を押したときは、取り直したスレッドの宛先へ送ります。
+
+まだ実機で確認していないもの: iCloud からの実際の送信、Microsoft OAuth の同意から送信まで。上のホストは公式ページと仕様に合わせたもので、この環境から各社のサーバへは繋いでいません。テストは偽の SMTP / IMAP です。
 
 `gmail.readonly`、`gmail.compose`、`gmail.modify` は同意画面に出しません。下書き保存はアプリの KV だけで、Gmail の下書きにはしません。
-
-送信の直前には、保存した宛先・件名と、受信レコードのハッシュを取り直します。違えば送らず、もう一度「送信」を求めます。受信箱を Gmail API で読み直すことはしません。
 
 ## 候補の本文
 
@@ -95,7 +117,7 @@ Goose や VS Code のように MCP Apps を話すホストは、同じ `/mcp` �
 
 1. 承認済みのリダイレクト URI に `https://reply.kimitotalk.link/oauth/google/callback` を追加する。
 2. `reply.kimitotalk.link` の DNS を、この Worker に向ける。
-3. スコープは増やさない。`openid`、`https://www.googleapis.com/auth/userinfo.email`、`https://www.googleapis.com/auth/gmail.send` のままにする。`gmail.readonly` / `gmail.compose` / `gmail.modify` は追加しない。
+3. スコープは `openid`、`email`、`https://www.googleapis.com/auth/gmail.send` だけにする。`gmail.readonly` / `gmail.compose` / `gmail.modify` は追加しない。
 4. Verification Center で `gmail.send` の審査状態を確認する。linebot の文書では、完了した証拠はまだ無い、とオーナーから聞いています。この環境からはその文書を読めなかったので、コンソールで再確認してください。
 5. 秘密はリポジトリに置かず、linebot と同じクライアント秘密をこの Worker に入れます。
 
@@ -104,19 +126,50 @@ npx wrangler secret put GOOGLE_CLIENT_SECRET
 npx wrangler secret put OAUTH_ADMIN_KEY
 npx wrangler secret put INCOMING_FORWARD_TOKEN
 npx wrangler secret put MCP_OAUTH_CONSENT_KEY
+npx wrangler secret put MAIL_TOKEN_ENCRYPTION_KEY
 ```
+
+`MAIL_TOKEN_ENCRYPTION_KEY` は 64 桁の hex です。アプリパスワードと Microsoft のリフレッシュトークンを AES-256-GCM（`v1:<iv hex>:<cipher hex>`）で包みます。値はリポジトリに置きません。
 
 任意で、接続してよい Gmail を固定するときは `ALLOWED_GMAIL` を vars に書きます。
 
-接続の開始は、ブラウザで次を開きます。
+Gmail の接続開始は、ブラウザで次を開きます。
 
 `https://reply.kimitotalk.link/oauth/google/start?key=<OAUTH_ADMIN_KEY>`
 
-転送メールを取り込む Worker は、届いた JSON を次へ POST します。ヘッダは `x-incoming-token` です。
+### Email Routing
 
-`https://reply.kimitotalk.link/incoming/forward`
+1. Cloudflare の Email Routing で、宛先 `notify@kimitotalk.link` をこの Worker の `email()` に渡す。`send_email` バインディングは足さない。
+2. 利用者のメールボックスで、届いたメールを `notify@kimitotalk.link` へ自動転送する。
+3. 転送元のアドレスが `X-Forwarded-For` に入るようにする。これが `email_threads.owner` になる。
 
-本文は `from`、`subject`、`body` です。プロバイダは `email_routing` として保存します。
+JSON で試験する口も残しています。ヘッダは `x-incoming-token`、宛先は `https://reply.kimitotalk.link/incoming/forward` です。本文は引用として最大 280 字だけ残し、全文は保存しません。
+
+### アプリパスワード（Gmail 以外）
+
+1. `https://reply.kimitotalk.link/auth/mail-app/issue?key=<OAUTH_ADMIN_KEY>&address=<アドレス>` を開く。プロバイダはアドレスから決まります。
+2. 返った URL（`/auth/mail-app/setup?c=<code>`）を 10 分以内に開く。試行は 5 回までです。
+3. 各社のアプリパスワードを入れる。ドコモは dアカウント ID、au とその他は SMTP/IMAP のホストも入れる。
+4. 保存前に IMAP と SMTP のログインだけを確認します。この確認では MAIL FROM を送らないので、メールは出ません。
+
+### Microsoft（Entra）
+
+送信に使うときだけ、アプリ登録を足します。無効のままなら Microsoft は受信だけです。
+
+1. Entra でアプリを登録し、リダイレクト URI に `https://reply.kimitotalk.link/auth/ms/callback` を追加する。
+2. 委任された権限に `offline_access`、`https://outlook.office.com/IMAP.AccessAsUser.All`、`https://outlook.office.com/SMTP.Send` を付ける。
+3. 次を置く。`MS_OAUTH_ENABLED` は `1` のときだけ送信する。
+
+```bash
+npx wrangler secret put MS_CLIENT_ID
+npx wrangler secret put MS_CLIENT_SECRET
+```
+
+`wrangler.toml` の vars に `MS_OAUTH_ENABLED = "1"` を足す。接続開始は `/auth/ms/start?key=<OAUTH_ADMIN_KEY>&login_hint=<アドレス>` です。同意は `prompt=select_account` です。リフレッシュトークンは `msrt:` を付けてから暗号化します。
+
+### 返信の検出（任意）
+
+`scheduled` が、接続済みメールの送信済みを IMAP でヘッダだけ読み、In-Reply-To が保存した message-id と一致したら、そのスレッドを返信済みにします。有効にするときは `wrangler.toml` に cron を足します。既定では動かしていません。
 
 ### LLM
 
