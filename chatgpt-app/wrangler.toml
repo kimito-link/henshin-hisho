@@ -1,0 +1,23 @@
+name = "henshin-hisho-chatgpt"
+main = "src/index.js"
+compatibility_date = "2026-10-22"
+
+# 接続先は https://<ホスト>/mcp 。料金ページは /price/ 。
+# デプロイ前に KV を作り、下の id を差し替える:
+#   npx wrangler kv namespace create CHATGPT_KV
+# シークレット（値はここに書かない）:
+#   npx wrangler secret put STRIPE_SECRET_KEY
+#   npx wrangler secret put STRIPE_WEBHOOK_SECRET
+#   npx wrangler secret put STRIPE_PRICE_ID
+#   npx wrangler secret put MCP_ACCESS_TOKEN
+
+[observability]
+enabled = true
+
+[observability.traces]
+enabled = true
+
+[[kv_namespaces]]
+binding = "CHATGPT_KV"
+id = "00000000000000000000000000000000"
+preview_id = "00000000000000000000000000000001"

@@ -1,0 +1,6 @@
+# ローカル用。実値は .dev.vars に書き、コミットしない。
+# Stripe を未設定のままでも料金ページと返信候補フォームは動く。
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_ID=
+MCP_ACCESS_TOKEN=
