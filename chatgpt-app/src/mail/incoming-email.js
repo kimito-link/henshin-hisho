@@ -20,13 +20,15 @@ function mailboxList(value) {
   return addressList(emails.join(', '));
 }
 
+const ROUTING_ADDRESSES = new Set(['notify@kimitotalk.link', 'reply@kimitotalk.link']);
+
 function ownerOf(parsed, message) {
   const forwarded = headerValue(parsed, 'x-forwarded-for') || message?.headers?.get?.('x-forwarded-for') || '';
   const fromHeader = addressList(forwarded);
   if (fromHeader) return fromHeader.split(', ')[0];
   const envelope = addressList(message?.from || '');
   const first = envelope.split(', ')[0] || '';
-  if (first && first !== 'notify@kimitotalk.link') return first;
+  if (first && !ROUTING_ADDRESSES.has(first)) return first;
   return '';
 }
 

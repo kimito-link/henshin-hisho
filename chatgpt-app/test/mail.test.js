@@ -7,6 +7,7 @@ import { pollAnsweredThreads } from '../src/mail/poll.js';
 import { detectProvider, providerOf, serversFor, validateServers } from '../src/mail/providers.js';
 import { deliverReply } from '../src/mail/send.js';
 import { dotStuff, smtpSession } from '../src/mail/smtp.js';
+import { threadFromParsed } from '../src/mail/incoming-email.js';
 import { getEmailThread } from '../src/mail/threads.js';
 import { plainInitial, xoauth2Initial } from '../src/mail/auth.js';
 import { envWithKv } from './helpers.js';
@@ -391,6 +392,30 @@ await test('iCloud は SMTP でスレッドの宛先へ送り、認証失敗は 
   });
   assert.equal(denied.reason, 'smtp_auth_failed');
   assert.equal(JSON.parse(await env.CHATGPT_KV.get('mail-link:owner@icloud.com')).status, 'error');
+});
+
+await test('転送先アドレスは owner にせず、X-Forwarded-For の本人だけを残す', async () => {
+  for (const routing of ['notify@kimitotalk.link', 'reply@kimitotalk.link']) {
+    const fields = threadFromParsed(
+      { from: [{ address: 'sender@example.com' }], messageId: '<a@example.com>' },
+      { from: routing }
+    );
+    assert.equal(fields.owner, '');
+  }
+  const kept = threadFromParsed(
+    { from: [{ address: 'sender@example.com' }], messageId: '<b@example.com>' },
+    { from: 'owner@icloud.com' }
+  );
+  assert.equal(kept.owner, 'owner@icloud.com');
+  const forwarded = threadFromParsed(
+    {
+      headers: [{ key: 'x-forwarded-for', value: 'owner@icloud.com' }],
+      from: [{ address: 'sender@example.com' }],
+      messageId: '<c@example.com>'
+    },
+    { from: 'reply@kimitotalk.link' }
+  );
+  assert.equal(forwarded.owner, 'owner@icloud.com');
 });
 
 await test('Microsoft は OAuth が揃ったときだけ送信経路になる', async () => {

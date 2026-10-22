@@ -24,7 +24,7 @@ MIME は、安定版の MCP Apps（2026-01-26、`io.modelcontextprotocol/ui`）�
 
 ## プロバイダ
 
-受信は、どのプロバイダも同じです。利用者が自分のメールを `notify@kimitotalk.link` へ自動転送し、Cloudflare Email Routing がこの Worker の `email()` に渡します。`handleIncomingEmail` が PostalMime で解析し、`x-forwarded-for` のアドレスを転送した本人として `email_threads` に残します。保存するのは message-id、宛先、件名、短い引用だけです。本文は保存しません。`email()` は例外を外に出さないので、失敗してもバウンスしません。
+受信は、どのプロバイダも同じです。利用者が自分のメールを `reply@kimitotalk.link` へ自動転送し、Cloudflare Email Routing がこの Worker の `email()` に渡します。`notify@kimitotalk.link` は linebot の宛先のままにし、この Worker には向けません。`handleIncomingEmail` が PostalMime で解析し、`x-forwarded-for` のアドレスを転送した本人として `email_threads` に残します。封筒の From が `reply@` または `notify@` だけのときは、その転送先を本人としては保存しません。保存するのは message-id、宛先、件名、短い引用だけです。本文は保存しません。`email()` は例外を外に出さないので、失敗してもバウンスしません。
 
 送信は二つだけです。
 
@@ -129,7 +129,7 @@ npx wrangler secret put MCP_OAUTH_CONSENT_KEY
 npx wrangler secret put MAIL_TOKEN_ENCRYPTION_KEY
 ```
 
-`MAIL_TOKEN_ENCRYPTION_KEY` は 64 桁の hex です。アプリパスワードと Microsoft のリフレッシュトークンを AES-256-GCM（`v1:<iv hex>:<cipher hex>`）で包みます。値はリポジトリに置きません。
+`MAIL_TOKEN_ENCRYPTION_KEY` は、この Worker 用に新しく作る 64 桁の hex です。アプリパスワードと Microsoft のリフレッシュトークンを AES-256-GCM（`v1:<iv hex>:<cipher hex>`）で包み、この Worker の KV にだけ置きます。linebot の D1 は読まないので、linebot の鍵と揃える必要はありません。linebot の暗号文をこの KV へコピーするときだけ、同じ鍵にします。値はリポジトリに置きません。
 
 任意で、接続してよい Gmail を固定するときは `ALLOWED_GMAIL` を vars に書きます。
 
@@ -139,8 +139,8 @@ Gmail の接続開始は、ブラウザで次を開きます。
 
 ### Email Routing
 
-1. Cloudflare の Email Routing で、宛先 `notify@kimitotalk.link` をこの Worker の `email()` に渡す。`send_email` バインディングは足さない。
-2. 利用者のメールボックスで、届いたメールを `notify@kimitotalk.link` へ自動転送する。
+1. Cloudflare の Email Routing で、新しい宛先 `reply@kimitotalk.link` だけをこの Worker の `email()` に渡す。`notify@kimitotalk.link` は linebot のルールのままにする。付け替えると linebot の受信が止まります。`send_email` バインディングは足さない。
+2. 利用者のメールボックスで、届いたメールを `reply@kimitotalk.link` へ自動転送する。
 3. 転送元のアドレスが `X-Forwarded-For` に入るようにする。これが `email_threads.owner` になる。
 
 JSON で試験する口も残しています。ヘッダは `x-incoming-token`、宛先は `https://reply.kimitotalk.link/incoming/forward` です。本文は引用として最大 280 字だけ残し、全文は保存しません。

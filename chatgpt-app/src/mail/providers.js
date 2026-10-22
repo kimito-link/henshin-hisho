@@ -1,6 +1,7 @@
 /**
  * メールプロバイダ。利用者が選ぶのではなく、アドレスのドメインと MX で決めて mail_app_links.provider に保存する。
- * 受信はどのプロバイダも notify@kimitotalk.link への転送（Email Routing → email()）だけ。
+ * 受信はどのプロバイダも reply@kimitotalk.link への転送（Email Routing → email()）だけ。
+ * notify@kimitotalk.link は linebot のままにし、この Worker には向けない。
  * 送信は二つだけ。Gmail / Workspace は Gmail API。それ以外は cloudflare:sockets の SMTP。
  * send_email バインディング、message.reply()、Resend、MailChannels、Graph sendMail は使わない。
  *

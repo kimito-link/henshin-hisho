@@ -19,7 +19,9 @@ compatibility_date = "2026-10-22"
 #   npx wrangler secret put MS_CLIENT_ID
 #   npx wrangler secret put MS_CLIENT_SECRET
 # Gmail のクライアント ID は linebot と同じ公開値。スコープは gmail.send + openid + email。
-# 受信は Email Routing が email() に渡す。send_email バインディングは使わない。
+# 受信は Email Routing が email() に渡す。宛先は reply@kimitotalk.link。
+# notify@kimitotalk.link は linebot のままにし、この Worker には向けない。
+# send_email バインディングは使わない。
 # Microsoft の送信を有効にするときは vars に MS_OAUTH_ENABLED = "1" を足す。
 # 送信済みの返信検出を動かすときは次を足す。
 # [triggers]
