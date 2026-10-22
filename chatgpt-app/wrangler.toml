@@ -10,6 +10,16 @@ compatibility_date = "2026-10-22"
 #   npx wrangler secret put STRIPE_WEBHOOK_SECRET
 #   npx wrangler secret put STRIPE_PRICE_ID
 #   npx wrangler secret put MCP_ACCESS_TOKEN
+#   npx wrangler secret put GOOGLE_CLIENT_SECRET
+#   npx wrangler secret put OAUTH_ADMIN_KEY
+#   npx wrangler secret put INCOMING_FORWARD_TOKEN
+#   npx wrangler secret put MCP_OAUTH_CONSENT_KEY
+#   npx wrangler secret put INTERNAL_DRAFT_TOKEN
+# Gmail のクライアント ID は linebot と同じ公開値。スコープは gmail.send だけ。
+
+[vars]
+GOOGLE_CLIENT_ID = "899798982543-2jk3d2fp97c02js71opg7l1j9fa7oh5a.apps.googleusercontent.com"
+GOOGLE_REDIRECT_URI = "https://reply.kimitotalk.link/oauth/google/callback"
 
 [observability]
 enabled = true

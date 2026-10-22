@@ -1,5 +1,9 @@
 import { billingView, consumeGeneration, PRICE_YEN, startTrial } from './billing.js';
+import { buildCompose, compareSendState, fallbackText } from './compose.js';
+import { generateCandidates } from './drafts.js';
+import { buildGoogleAuthUrl, readGmailAccount, readPrimaryGmailAccount, sendViaGmail } from './gmail.js';
 import { mcpCorsHeaders, publicOrigin, validDeskId } from './http.js';
+import { getIncoming, listIncoming } from './incoming.js';
 import { applyInstruction, assessMessage, buildCandidates, compareSnapshot, handoffFor, PATENT_LABEL, reviewConfirmation } from './reply.js';
 import { listShiori, saveShiori } from './shiori.js';
 import { WIDGET_HTML } from './widget.js';
@@ -8,62 +12,67 @@ const RESOURCE_URI = 'ui://henshin-hisho/reply-form.html';
 const RESOURCE_MIME = 'text/html;profile=mcp-app';
 const FALLBACK_PROTOCOL_VERSION = '2026-06-18';
 
-const UI_META = {
-  ui: { resourceUri: RESOURCE_URI },
-  'ui/resourceUri': RESOURCE_URI
-};
-
-const APP_ONLY = {
-  ui: { resourceUri: RESOURCE_URI, visibility: ['app'] },
-  'ui/resourceUri': RESOURCE_URI
-};
+function uiMeta(appOnly = false) {
+  const ui = { resourceUri: RESOURCE_URI };
+  if (appOnly) ui.visibility = ['app'];
+  return {
+    ui,
+    'ui/resourceUri': RESOURCE_URI,
+    'openai/outputTemplate': RESOURCE_URI
+  };
+}
 
 const TOOLS = [
   {
     name: 'open_reply_desk',
-    title: '返信候補フォームを開く',
-    description:
-      '受け取った連絡の返信候補フォームを開く。危険度の理由を表示する。メール・LINE・Chatworkへの送信はしない。候補が必要なら propose_replies を使う。',
+    title: 'メールの作成カードを開く',
+    description: '宛先・件名・本文の作成カードを開く。送信はしない。候補が必要なら propose_replies を使う。',
     inputSchema: messageSchema(),
-    _meta: UI_META
+    _meta: uiMeta()
   },
   {
     name: 'propose_replies',
-    title: '返信候補を作る',
+    title: '返信の作成カードを作る',
     description:
-      '本文と自然文の指示から、危険度（点数と理由）と返信候補を作る。各候補に、相手が受け取りそうな気持ち（分類・点数・理由）を付ける。「さっきの人」はしおりの直近に解決し、無いときは推測しない。通知メールは返信候補を作らず振り分ける。高リスクは保留表現だけにする。送信はしない。',
+      '受け取ったメールへの返信カードを返す。宛先は元メールか、しおりの「さっきの人」から解決する。件名は Re: を付ける。本文は候補の先頭で、候補には相手の気持ち（分類・点数・理由）が付く。LLM は backend の下書き API を通し、使えないときは定型文にする。送信はしない。',
     inputSchema: messageSchema(),
-    _meta: UI_META
+    _meta: uiMeta()
+  },
+  {
+    name: 'list_incoming',
+    title: '届いたメールを見る',
+    description: '転送（Cloudflare Email Routing）で取り込んだ受信メールを新しい順に返す。送信はしない。',
+    inputSchema: { type: 'object', properties: {} },
+    _meta: uiMeta()
+  },
+  {
+    name: 'get_incoming',
+    title: '届いたメールを1件見る',
+    description: '受信メールを1件返す。そのあと propose_replies に incomingId を渡す。送信はしない。',
+    inputSchema: { type: 'object', properties: { incomingId: { type: 'string' } }, required: ['incomingId'] },
+    _meta: uiMeta()
   },
   {
     name: 'save_shiori',
     title: 'しおりに残す',
-    description: '本文と選んだ候補をしおりとして残し、次に参照できるようにする。送信はしない。',
+    description: '本文と選んだ候補をしおりとして残す。送信はしない。',
     inputSchema: {
       type: 'object',
-      properties: {
-        ...messageSchema().properties,
-        candidateText: { type: 'string' },
-        riskLevel: { type: 'string' }
-      }
+      properties: { ...messageSchema().properties, candidateText: { type: 'string' }, riskLevel: { type: 'string' } }
     },
-    _meta: UI_META
+    _meta: uiMeta()
   },
   {
     name: 'list_shiori',
     title: 'しおりを見る',
     description: '保存したしおりを新しい順に返す。送信はしない。',
-    inputSchema: {
-      type: 'object',
-      properties: { deskId: { type: 'string' }, email: { type: 'string' } }
-    },
-    _meta: UI_META
+    inputSchema: { type: 'object', properties: { deskId: { type: 'string' }, email: { type: 'string' } } },
+    _meta: uiMeta()
   },
   {
     name: 'confirm_candidate',
     title: '確認してコピー用の文面を渡す',
-    description:
-      '人が確認チェックを入れた後だけ、コピー用の文面を返す。作成時に保存した文面と危険度を取り直し、不一致なら文面を渡さず再確認を求める。高リスクはリスク確認も必須。送信はしない。アプリのフォームからのみ呼ぶ。',
+    description: '人が確認したあとだけ、コピー用の文面を返す。状態が違えば渡さない。送信はしない。カードからのみ呼ぶ。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -72,11 +81,56 @@ const TOOLS = [
         riskAcknowledged: { type: 'boolean' },
         riskLevel: { type: 'string' },
         channel: { type: 'string' },
-        deskId: { type: 'string' }
+        deskId: { type: 'string' },
+        snapshotId: { type: 'string' }
       },
       required: ['text', 'humanConfirmed']
     },
-    _meta: APP_ONLY
+    _meta: uiMeta(true)
+  },
+  {
+    name: 'save_compose_draft',
+    title: '下書きをアプリに保存する',
+    description: '作成中の宛先・件名・本文をアプリ側に保存する。Gmail の下書きにはしない。送信はしない。カードからのみ呼ぶ。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        deskId: { type: 'string' },
+        from: { type: 'string' },
+        to: { type: 'string' },
+        cc: { type: 'string' },
+        bcc: { type: 'string' },
+        subject: { type: 'string' },
+        body: { type: 'string' }
+      }
+    },
+    _meta: uiMeta(true)
+  },
+  {
+    name: 'send_reply',
+    title: '作成カードから送信する',
+    description:
+      'カードの「送信」を押したときだけ、接続済みの Gmail（gmail.send）で送る。直前に受信状態と宛先を取り直し、違えば送らず再確認を求める。モデルからは呼ばない。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userApproved: { type: 'boolean' },
+        reconfirmed: { type: 'boolean' },
+        sendNonce: { type: 'string' },
+        snapshotId: { type: 'string' },
+        riskAcknowledged: { type: 'boolean' },
+        riskLevel: { type: 'string' },
+        channel: { type: 'string' },
+        from: { type: 'string' },
+        to: { type: 'string' },
+        cc: { type: 'string' },
+        bcc: { type: 'string' },
+        subject: { type: 'string' },
+        body: { type: 'string' }
+      },
+      required: ['userApproved', 'sendNonce', 'snapshotId']
+    },
+    _meta: uiMeta(true)
   },
   {
     name: 'start_trial',
@@ -87,17 +141,14 @@ const TOOLS = [
       properties: { email: { type: 'string' }, deskId: { type: 'string' } },
       required: ['email']
     },
-    _meta: UI_META
+    _meta: uiMeta()
   },
   {
     name: 'billing_status',
     title: 'プランを確認する',
-    description: `メールアドレスのプラン（プレビュー、お試し、有料、終了）と料金（月額${PRICE_YEN}円）を返す。`,
-    inputSchema: {
-      type: 'object',
-      properties: { email: { type: 'string' }, deskId: { type: 'string' } }
-    },
-    _meta: UI_META
+    description: `メールアドレスのプランと料金（月額${PRICE_YEN}円）を返す。送信はしない。`,
+    inputSchema: { type: 'object', properties: { email: { type: 'string' }, deskId: { type: 'string' } } },
+    _meta: uiMeta()
   }
 ];
 
@@ -105,16 +156,22 @@ function messageSchema() {
   return {
     type: 'object',
     properties: {
-      sender: { type: 'string', description: '差出人' },
-      subject: { type: 'string', description: '件名' },
+      sender: { type: 'string', description: '相手の名前またはメールアドレス' },
+      to: { type: 'string', description: '宛先。空なら相手のメールアドレスを使う' },
+      from: { type: 'string', description: '差出人。空なら接続済みの Gmail' },
+      cc: { type: 'string' },
+      bcc: { type: 'string' },
+      subject: { type: 'string', description: '相手の件名。返信では Re: を付ける' },
       body: { type: 'string', description: '相手からの本文' },
       channel: { type: 'string', enum: ['email', 'line', 'chatwork', 'other'] },
       tone: { type: 'string', enum: ['polite', 'firm', 'calm', 'casual'] },
       intent: { type: 'string', description: '返信の意図' },
+      instruction: { type: 'string', description: '自然文の指示。さっきの人、など' },
       email: { type: 'string', description: '利用者のメールアドレス' },
       deskId: { type: 'string' },
-      discountCeilingPercent: { type: 'integer', description: '値引き上限（%）' },
-      minOrderValueYen: { type: 'integer', description: '最低受注額（円）' }
+      incomingId: { type: 'string', description: '取り込んだ受信メールの id' },
+      discountCeilingPercent: { type: 'integer' },
+      minOrderValueYen: { type: 'integer' }
     }
   };
 }
@@ -147,6 +204,8 @@ async function present(env, input, origin, extra = {}) {
   const assessment = assessMessage(desk);
   const billing = extra.billing || (await billingView(env, desk.email));
   const shiori = await listShiori(env, desk);
+  const account = await readPrimaryGmailAccount(env);
+  const compose = extra.compose || buildCompose(desk, extra.reference || {}, account);
   const payload = {
     ok: extra.ok !== false,
     reason: extra.reason || '',
@@ -160,181 +219,273 @@ async function present(env, input, origin, extra = {}) {
     discountCeilingPercent: assessment.message.discountCeilingPercent,
     minOrderValueYen: assessment.message.minOrderValueYen,
     classification: assessment.classification,
-    handoff: assessment.handoff,
+    handoff: extra.handoff || assessment.handoff,
     risk: assessment.risk,
     shiori: shiori.items || [],
     billing,
     priceUrl: `${origin}/price/`,
     patentLabel: PATENT_LABEL,
-    sent: false
+    compose,
+    draftSource: extra.draftSource || '',
+    sent: extra.sent === true
   };
   if (Object.prototype.hasOwnProperty.call(extra, 'candidates')) payload.candidates = extra.candidates;
   if (extra.reference) payload.reference = extra.reference;
   if (extra.instruction) payload.instruction = extra.instruction;
   if (extra.snapshotId !== undefined) payload.snapshotId = extra.snapshotId;
   if (extra.stateCheck) payload.stateCheck = extra.stateCheck;
+  if (extra.reconfirm) payload.reconfirm = true;
+  if (extra.incoming) payload.incoming = extra.incoming;
   return payload;
 }
 
 async function prepareInput(env, input) {
   const listed = await listShiori(env, input);
-  return applyInstruction(input, listed.items || []);
+  const prepared = applyInstruction(input, listed.items || []);
+  const source = { ...prepared.input };
+  let incoming = null;
+  if (source.incomingId) {
+    incoming = await getIncoming(env, source.incomingId);
+    if (incoming) {
+      if (!source.sender) source.sender = incoming.from;
+      if (!source.subject) source.subject = incoming.subject;
+      if (!source.body) source.body = incoming.body;
+      if (!source.to) source.to = incoming.from;
+    }
+  }
+  return { ...prepared, input: source, incoming };
 }
 
-async function storeSnapshot(env, assessment, candidates) {
-  if (!candidates.length) return { snapshotId: '', stateCheck: 'not_needed' };
+async function storeSnapshot(env, assessment, candidates, compose, incoming) {
+  const sendNonce = crypto.randomUUID();
   const snapshotId = crypto.randomUUID();
   const snapshot = {
     id: snapshotId,
     riskLevel: assessment.risk.level,
-    texts: candidates.map((candidate) => candidate.text)
+    texts: candidates.map((candidate) => candidate.text),
+    to: compose.to,
+    cc: compose.cc,
+    bcc: compose.bcc,
+    subject: compose.subject,
+    body: compose.body,
+    incomingId: incoming?.id || '',
+    incomingHash: incoming?.hash || '',
+    sendNonce
   };
-  if (!env.CHATGPT_KV) return { snapshotId, stateCheck: 'not_stored' };
+  if (!candidates.length) return { snapshotId: '', stateCheck: 'not_needed', sendNonce: '' };
+  if (!env.CHATGPT_KV) return { snapshotId, stateCheck: 'not_stored', sendNonce };
   await env.CHATGPT_KV.put(`snapshot:${snapshotId}`, JSON.stringify(snapshot), { expirationTtl: 86400 });
-  return { snapshotId, stateCheck: 'stored' };
+  return { snapshotId, stateCheck: 'stored', sendNonce };
 }
 
-function toolResult(payload, text) {
-  return {
+function toolResult(payload, meta) {
+  const result = {
     isError: payload.ok === false,
-    content: [{ type: 'text', text }],
+    content: [{ type: 'text', text: fallbackText(payload) }],
     structuredContent: payload
   };
+  if (meta) result._meta = meta;
+  return result;
+}
+
+async function loadSnapshot(env, id) {
+  if (!env.CHATGPT_KV || !id) return null;
+  const raw = await env.CHATGPT_KV.get(`snapshot:${id}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 async function callTool(env, name, args, origin) {
   const input = args && typeof args === 'object' ? args : {};
   if (name === 'open_reply_desk') {
     const payload = await present(env, input, origin, { candidates: [] });
-    return toolResult(payload, '返信候補フォームを開きました。送信はしていません。');
+    return toolResult(payload);
+  }
+  if (name === 'list_incoming') {
+    const listed = await listIncoming(env);
+    const payload = await present(env, input, origin, { ok: listed.ok, reason: listed.reason || '', candidates: [] });
+    payload.incomingItems = listed.items || [];
+    return toolResult(payload);
+  }
+  if (name === 'get_incoming') {
+    const item = await getIncoming(env, input.incomingId);
+    const payload = await present(env, item ? { ...input, sender: item.from, subject: item.subject, body: item.body, to: item.from, incomingId: item.id } : input, origin, {
+      ok: Boolean(item),
+      reason: item ? '' : 'invalid_incoming',
+      candidates: [],
+      incoming: item
+    });
+    return toolResult(payload);
   }
   if (name === 'propose_replies') {
     const prepared = await prepareInput(env, input);
     const source = prepared.input;
-    const context = { reference: prepared.reference, instruction: prepared.instruction };
+    const context = { reference: prepared.reference, instruction: prepared.instruction, incoming: prepared.incoming };
     const assessment = assessMessage(source);
     if (!assessment.message.body) {
       const payload = await present(env, source, origin, { ok: false, reason: 'empty_message', candidates: [], ...context });
-      return toolResult(payload, '本文が空です。送信はしていません。');
+      return toolResult(payload);
     }
     if (assessment.classification === 'notice') {
       const payload = await present(env, source, origin, { candidates: [], ...context });
-      return toolResult(payload, '通知メールとして振り分けました。返信候補は作っていません。送信はしていません。');
+      return toolResult(payload);
     }
     const gate = await consumeGeneration(env, source);
-    if (!gate.ok) {
-      const payload = await present(env, source, origin, {
-        ok: false,
-        reason: gate.reason,
-        billing: gate.billing,
-        candidates: [],
-        ...context
-      });
-      return toolResult(
-        payload,
-        `候補の作成にはお試し、または月額${PRICE_YEN}円のプランが必要です。危険度は表示しています。送信はしていません。`
-      );
-    }
-    const candidates = buildCandidates(assessment);
-    const snapshot = await storeSnapshot(env, assessment, candidates);
+    const generated = gate.ok
+      ? await generateCandidates(env, assessment)
+      : { candidates: buildCandidates(assessment), draftSource: 'template', draftReason: gate.reason };
+    const account = await readPrimaryGmailAccount(env);
+    const compose = buildCompose(source, prepared.reference, account);
+    compose.body = generated.candidates[0]?.text || '';
+    const snapshot = await storeSnapshot(env, assessment, generated.candidates, compose, prepared.incoming);
     const payload = await present(env, source, origin, {
-      candidates,
-      billing: gate.billing,
+      candidates: generated.candidates,
+      billing: gate.billing || (await billingView(env, source.email)),
+      compose,
+      draftSource: generated.draftSource,
+      reason: generated.draftReason || '',
       snapshotId: snapshot.snapshotId,
       stateCheck: snapshot.stateCheck,
       ...context
     });
-    const who = prepared.reference.resolved ? `さっきの人は${prepared.reference.sender || 'しおりの相手'}に解決しました。` : '';
-    return toolResult(
-      payload,
-      `返信候補を${candidates.length}件作りました。各候補に相手の気持ち（分類・点数・理由）を付けました。危険度は${assessment.risk.level}（${assessment.risk.score}）。${who}送信はしていません。`
-    );
+    return toolResult(payload, snapshot.sendNonce ? { sendNonce: snapshot.sendNonce } : null);
   }
   if (name === 'save_shiori') {
     const saved = await saveShiori(env, input);
     const payload = await present(env, input, origin, { ok: saved.ok, reason: saved.reason || '' });
-    return toolResult(payload, saved.ok ? 'しおりに残しました。送信はしていません。' : 'しおりに残せませんでした。送信はしていません。');
+    return toolResult(payload);
   }
   if (name === 'list_shiori') {
-    const listed = await listShiori(env, input);
-    const payload = await present(env, input, origin, { ok: listed.ok, reason: listed.reason || '' });
-    return toolResult(payload, 'しおりを返しました。送信はしていません。');
+    const payload = await present(env, input, origin);
+    return toolResult(payload);
+  }
+  if (name === 'save_compose_draft') {
+    if (!env.CHATGPT_KV) {
+      const payload = await present(env, input, origin, { ok: false, reason: 'storage_not_configured', sent: false });
+      return toolResult(payload);
+    }
+    const id = crypto.randomUUID();
+    const compose = buildCompose(input, {}, await readPrimaryGmailAccount(env));
+    compose.body = String(input.body || '').slice(0, 4000);
+    compose.subject = String(input.subject || compose.subject).slice(0, 200);
+    await env.CHATGPT_KV.put(`app-draft:${id}`, JSON.stringify({ id, compose, at: Date.now() }));
+    const payload = await present(env, input, origin, { compose, sent: false });
+    payload.draftId = id;
+    return toolResult(payload);
+  }
+  if (name === 'send_reply') {
+    const channel = input.channel || 'email';
+    if (channel !== 'email') {
+      const payload = await present(env, input, origin, { ok: false, reason: 'channel_not_email', sent: false, handoff: handoffFor(channel) });
+      return toolResult(payload);
+    }
+    const snapshot = await loadSnapshot(env, input.snapshotId);
+    const incoming = snapshot?.incomingId ? await getIncoming(env, snapshot.incomingId) : null;
+    const compared = compareSendState(snapshot, incoming, input);
+    if (!compared.ok) {
+      const payload = await present(env, input, origin, {
+        ok: false,
+        reason: compared.reason,
+        reconfirm: compared.reason === 'state_mismatch',
+        sent: false,
+        compose: {
+          from: input.from || '',
+          to: input.to || '',
+          cc: input.cc || '',
+          bcc: input.bcc || '',
+          subject: input.subject || '',
+          body: input.body || '',
+          provider: 'gmail',
+          providerLabel: 'Gmail'
+        }
+      });
+      return toolResult(payload);
+    }
+    if (snapshot.riskLevel === 'high' && input.riskAcknowledged !== true) {
+      const payload = await present(env, input, origin, { ok: false, reason: 'risk_acknowledgement_required', sent: false });
+      return toolResult(payload);
+    }
+    const from = String(input.from || '').trim().toLowerCase();
+    const account = (await readGmailAccount(env, from)) || (await readPrimaryGmailAccount(env));
+    if (account && from && account.email !== from) {
+      const payload = await present(env, input, origin, { ok: false, reason: 'gmail_not_connected', sent: false });
+      return toolResult(payload);
+    }
+    const sent = await sendViaGmail(env, account, {
+      from: account?.email || from,
+      to: input.to,
+      cc: input.cc,
+      bcc: input.bcc,
+      subject: input.subject,
+      body: input.body
+    }, env.GMAIL_FETCH || fetch);
+    const payload = await present(env, input, origin, {
+      ok: sent.ok,
+      reason: sent.ok ? '' : sent.reason,
+      sent: sent.sent === true,
+      compose: {
+        from: account?.email || from,
+        provider: 'gmail',
+        providerLabel: 'Gmail',
+        to: input.to || '',
+        cc: input.cc || '',
+        bcc: input.bcc || '',
+        subject: input.subject || '',
+        body: input.body || ''
+      }
+    });
+    if (sent.messageId) payload.providerMessageId = sent.messageId;
+    return toolResult(payload);
   }
   if (name === 'confirm_candidate') {
     const review = reviewConfirmation(input);
     if (!review.ok) {
-      return toolResult(
-        { ok: false, reason: review.reason, sent: false, priceUrl: `${origin}/price/`, patentLabel: PATENT_LABEL },
-        '確認が足りないため、文面を渡していません。送信はしていません。'
-      );
+      return toolResult({ ok: false, reason: review.reason, sent: false, priceUrl: `${origin}/price/`, patentLabel: PATENT_LABEL, compose: {}, candidates: [] });
     }
     let stateCheck = 'not_stored';
     if (env.CHATGPT_KV) {
-      const snapshotId = String(input.snapshotId || '');
-      const raw = snapshotId ? await env.CHATGPT_KV.get(`snapshot:${snapshotId}`) : null;
-      let snapshot = null;
-      try {
-        snapshot = raw ? JSON.parse(raw) : null;
-      } catch {
-        snapshot = null;
-      }
+      const snapshot = await loadSnapshot(env, input.snapshotId);
       const compared = compareSnapshot(snapshot, review);
       if (!compared.ok) {
-        return toolResult(
-          {
-            ok: false,
-            reason: 'state_mismatch',
-            reconfirm: true,
-            sent: false,
-            priceUrl: `${origin}/price/`,
-            patentLabel: PATENT_LABEL
-          },
-          '内容が変わったため、コピー用の文面は渡していません。候補を作り直して、もう一度確認してください。送信はしていません。'
-        );
+        return toolResult({
+          ok: false,
+          reason: 'state_mismatch',
+          reconfirm: true,
+          sent: false,
+          priceUrl: `${origin}/price/`,
+          patentLabel: PATENT_LABEL,
+          compose: { body: '' },
+          candidates: []
+        });
       }
       stateCheck = 'matched';
     }
-    const id = crypto.randomUUID();
-    if (env.CHATGPT_KV) {
-      await env.CHATGPT_KV.put(
-        `confirm:${id}`,
-        JSON.stringify({
-          id,
-          at: Date.now(),
-          riskLevel: review.riskLevel,
-          channel: input.channel || 'email',
-          sent: false,
-          stateCheck
-        })
-      );
-    }
-    return toolResult(
-      {
-        ok: true,
-        copyText: review.copyText,
-        confirmation: { id, sent: false },
-        handoff: handoffFor(input.channel),
-        stateCheck,
-        sent: false,
-        priceUrl: `${origin}/price/`,
-        patentLabel: PATENT_LABEL
-      },
-      '確認を記録しました。文面はコピー用です。送信はしていません。'
-    );
+    return toolResult({
+      ok: true,
+      copyText: review.copyText,
+      confirmation: { id: crypto.randomUUID(), sent: false },
+      handoff: handoffFor(input.channel),
+      stateCheck,
+      sent: false,
+      priceUrl: `${origin}/price/`,
+      patentLabel: PATENT_LABEL,
+      compose: { body: review.copyText, subject: '', to: '', from: '' },
+      candidates: []
+    });
   }
   if (name === 'start_trial') {
     const started = await startTrial(env, input.email);
-    const payload = await present(env, input, origin, {
-      ok: started.ok,
-      reason: started.reason || '',
-      billing: started.billing
-    });
-    return toolResult(payload, started.ok ? 'お試しの状態を返しました。送信はしていません。' : 'お試しを開始できません。送信はしていません。');
+    const payload = await present(env, input, origin, { ok: started.ok, reason: started.reason || '', billing: started.billing, candidates: [] });
+    return toolResult(payload);
   }
   if (name === 'billing_status') {
     const billing = await billingView(env, input.email);
-    const payload = await present(env, input, origin, { billing });
-    return toolResult(payload, `プランは${billing.plan}です。月額${PRICE_YEN}円。送信はしていません。`);
+    const payload = await present(env, input, origin, { billing, candidates: [] });
+    return toolResult(payload);
   }
   throw Object.assign(new Error(`unknown tool: ${name}`), { rpcCode: -32602 });
 }
@@ -357,8 +508,12 @@ export async function handleMcpRequest(request, env) {
       request,
       rpcResult(id, {
         protocolVersion,
-        capabilities: { tools: {}, resources: {} },
-        serverInfo: { name: 'henshin-hisho-chatgpt', version: '0.1.0' }
+        capabilities: {
+          tools: {},
+          resources: {},
+          extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [RESOURCE_MIME] } }
+        },
+        serverInfo: { name: 'henshin-hisho', version: '0.2.0' }
       })
     );
   }
@@ -371,25 +526,13 @@ export async function handleMcpRequest(request, env) {
     return respond(
       request,
       rpcResult(id, {
-        resources: [
-          {
-            uri: RESOURCE_URI,
-            name: 'reply-form',
-            description: '返信候補フォーム',
-            mimeType: RESOURCE_MIME
-          }
-        ]
+        resources: [{ uri: RESOURCE_URI, name: 'reply-form', description: 'メールの作成カード', mimeType: RESOURCE_MIME }]
       })
     );
   }
   if (method === 'resources/read') {
     if (params?.uri !== RESOURCE_URI) return respond(request, rpcError(id, -32002, 'resource not found'));
-    return respond(
-      request,
-      rpcResult(id, {
-        contents: [{ uri: RESOURCE_URI, mimeType: RESOURCE_MIME, text: WIDGET_HTML }]
-      })
-    );
+    return respond(request, rpcResult(id, { contents: [{ uri: RESOURCE_URI, mimeType: RESOURCE_MIME, text: WIDGET_HTML }] }));
   }
   if (method === 'tools/call') {
     try {
@@ -403,3 +546,5 @@ export async function handleMcpRequest(request, env) {
   }
   return respond(request, rpcError(id, -32601, `method not found: ${method}`));
 }
+
+export { buildGoogleAuthUrl };

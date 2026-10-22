@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
+import { WIRED_PROVIDERS } from '../src/providers.js';
 import { PATENT_LABEL } from '../src/reply.js';
 import { envWithKv } from './helpers.js';
 
@@ -66,7 +67,11 @@ await test('フォームプレビューは候補ツールと送信しない旨�
   const html = await response.text();
   assert.match(html, /propose_replies/);
   assert.match(html, /confirm_candidate/);
-  assert.match(html, /送信は行いません/);
+  assert.match(html, /このメールは未送信です/);
+  assert.match(html, /差出人/);
+  assert.match(html, /宛先/);
+  assert.match(html, /下書き保存/);
+  assert.match(html, /id="sendButton"/);
   assert.match(html, /ui\/initialize/);
   assert.match(html, /相手の気持ち/);
   assert.match(html, /candidate\.emotion/);
@@ -84,6 +89,9 @@ await test('MCPのツールとUIリソースがつながる', async () => {
   const names = listed.body.result.tools.map((tool) => tool.name);
   assert.ok(names.includes('propose_replies'));
   assert.equal(listed.body.result.tools[0]._meta.ui.resourceUri, 'ui://henshin-hisho/reply-form.html');
+  assert.equal(listed.body.result.tools[0]._meta['openai/outputTemplate'], 'ui://henshin-hisho/reply-form.html');
+  const init = await rpc(env, 'initialize', { protocolVersion: '2026-06-18', capabilities: {} });
+  assert.deepEqual(init.body.result.capabilities.extensions['io.modelcontextprotocol/ui'].mimeTypes, ['text/html;profile=mcp-app']);
   const resource = await rpc(env, 'resources/read', { uri: 'ui://henshin-hisho/reply-form.html' });
   assert.equal(resource.body.result.contents[0].mimeType, 'text/html;profile=mcp-app');
   assert.match(resource.body.result.contents[0].text, /返信候補/);
@@ -267,6 +275,165 @@ await test('Webhookの署名が違うとプランを変えない', async () => {
   );
   assert.equal(good.status, 200);
   assert.ok(await env.CHATGPT_KV.get('entitlement:nope@example.com'));
+});
+
+await test('作成カードは宛先と件名と未送信の本文を返す', async () => {
+  const env = envWithKv();
+  const proposed = await rpc(env, 'tools/call', {
+    name: 'propose_replies',
+    arguments: { sender: 'sato@example.com', subject: '納期の確認', body: '来週の納期を教えてください。', deskId: 'desk-compose1' }
+  });
+  const data = proposed.body.result.structuredContent;
+  const text = proposed.body.result.content[0].text;
+  assert.equal(data.compose.to, 'sato@example.com');
+  assert.equal(data.compose.subject, 'Re: 納期の確認');
+  assert.equal(data.compose.body, data.candidates[0].text);
+  assert.equal(data.sent, false);
+  assert.match(text, /このメールは未送信です/);
+  assert.match(text, /宛先: sato@example.com/);
+  assert.match(text, /件名: Re: 納期の確認/);
+  assert.equal(proposed.body.result._meta.sendNonce.length > 10, true);
+  assert.equal(JSON.stringify(data).includes(proposed.body.result._meta.sendNonce), false);
+  assert.equal(text.includes(proposed.body.result._meta.sendNonce), false);
+});
+
+await test('送信はカードの承認と状態の再確認が揃ったときだけ', async () => {
+  const calls = [];
+  const env = {
+    ...envWithKv(),
+    GOOGLE_CLIENT_SECRET: 'secret',
+    GMAIL_FETCH: async (url) => {
+      calls.push(String(url));
+      if (String(url).includes('oauth2.googleapis.com')) {
+        return new Response(JSON.stringify({ access_token: 'access' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ id: 'msg-1' }), { status: 200 });
+    }
+  };
+  const proposed = await rpc(env, 'tools/call', {
+    name: 'propose_replies',
+    arguments: { sender: 'sato@example.com', subject: '納期の確認', body: '来週の納期を教えてください。', deskId: 'desk-send-01' }
+  });
+  const data = proposed.body.result.structuredContent;
+  const nonce = proposed.body.result._meta.sendNonce;
+  await env.CHATGPT_KV.put('gmail-primary', 'owner@example.com');
+  await env.CHATGPT_KV.put(
+    'gmail-account:owner@example.com',
+    JSON.stringify({ email: 'owner@example.com', refreshToken: 'refresh', provider: 'gmail' })
+  );
+  const blocked = await rpc(env, 'tools/call', {
+    name: 'send_reply',
+    arguments: { snapshotId: data.snapshotId, to: data.compose.to, subject: data.compose.subject, body: data.compose.body, userApproved: true }
+  });
+  assert.equal(blocked.body.result.structuredContent.sent, false);
+  assert.equal(blocked.body.result.structuredContent.reason, 'approval_required');
+  assert.equal(calls.length, 0);
+  const edited = await rpc(env, 'tools/call', {
+    name: 'send_reply',
+    arguments: {
+      snapshotId: data.snapshotId,
+      sendNonce: nonce,
+      userApproved: true,
+      from: 'owner@example.com',
+      to: data.compose.to,
+      subject: data.compose.subject,
+      body: `${data.compose.body}\n追記`
+    }
+  });
+  assert.equal(edited.body.result.structuredContent.reason, 'state_mismatch');
+  assert.equal(edited.body.result.structuredContent.reconfirm, true);
+  assert.equal(edited.body.result.structuredContent.sent, false);
+  assert.equal(calls.length, 0);
+  const sent = await rpc(env, 'tools/call', {
+    name: 'send_reply',
+    arguments: {
+      snapshotId: data.snapshotId,
+      sendNonce: nonce,
+      userApproved: true,
+      reconfirmed: true,
+      from: 'owner@example.com',
+      to: data.compose.to,
+      subject: data.compose.subject,
+      body: `${data.compose.body}\n追記`
+    }
+  });
+  assert.equal(sent.body.result.structuredContent.sent, true);
+  assert.equal(sent.body.result.structuredContent.providerMessageId, 'msg-1');
+  assert.equal(calls.some((url) => url.includes('gmail.readonly')), false);
+});
+
+await test('下書きはアプリに残り、Gmail には送らない', async () => {
+  const env = envWithKv();
+  const saved = await rpc(env, 'tools/call', {
+    name: 'save_compose_draft',
+    arguments: { to: 'sato@example.com', subject: 'Re: 挨拶', body: '確認しました。', deskId: 'desk-draft-01' }
+  });
+  assert.equal(saved.body.result.structuredContent.sent, false);
+  assert.ok(saved.body.result.structuredContent.draftId);
+  assert.equal([...env.CHATGPT_KV.store.keys()].some((key) => key.startsWith('app-draft:')), true);
+});
+
+await test('転送メールは受信一覧に出て、送信前に取り直す', async () => {
+  const env = { ...envWithKv(), INCOMING_FORWARD_TOKEN: 'forward-token' };
+  const posted = await worker.fetch(
+    new Request('https://example.com/incoming/forward', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-incoming-token': 'forward-token' },
+      body: JSON.stringify({ from: 'sato@example.com', subject: '納期の確認', body: '来週でお願いします。', provider: 'email_routing' })
+    }),
+    env
+  );
+  const incoming = await posted.json();
+  assert.equal(incoming.item.provider, 'email_routing');
+  const listed = await rpc(env, 'tools/call', { name: 'list_incoming', arguments: {} });
+  assert.equal(listed.body.result.structuredContent.incomingItems.length, 1);
+  const proposed = await rpc(env, 'tools/call', {
+    name: 'propose_replies',
+    arguments: { incomingId: incoming.item.id, deskId: 'desk-incoming1' }
+  });
+  const data = proposed.body.result.structuredContent;
+  assert.equal(data.compose.to, 'sato@example.com');
+  await env.CHATGPT_KV.put(
+    `incoming:${incoming.item.id}`,
+    JSON.stringify({ ...incoming.item, body: '別の本文', hash: 'changed' })
+  );
+  const blocked = await rpc(env, 'tools/call', {
+    name: 'send_reply',
+    arguments: {
+      snapshotId: data.snapshotId,
+      sendNonce: proposed.body.result._meta.sendNonce,
+      userApproved: true,
+      to: data.compose.to,
+      subject: data.compose.subject,
+      body: data.compose.body
+    }
+  });
+  assert.equal(blocked.body.result.structuredContent.reason, 'state_mismatch');
+  assert.equal(blocked.body.result.structuredContent.sent, false);
+});
+
+await test('MCP の発見情報と Gmail の同意 URL', async () => {
+  const env = { ...envWithKv(), OAUTH_ADMIN_KEY: 'admin-key' };
+  const metadata = await worker.fetch(new Request('https://example.com/.well-known/oauth-protected-resource/mcp'), env);
+  const body = await metadata.json();
+  assert.equal(body.resource, 'https://example.com/mcp');
+  assert.deepEqual(body.authorization_servers, ['https://example.com']);
+  const auth = await worker.fetch(new Request('https://example.com/.well-known/oauth-authorization-server'), env);
+  const server = await auth.json();
+  assert.deepEqual(server.code_challenge_methods_supported, ['S256']);
+  const start = await worker.fetch(new Request('https://example.com/oauth/google/start?key=admin-key'), env);
+  assert.equal(start.status, 302);
+  const location = start.headers.get('location');
+  assert.match(location, /899798982543-2jk3d2fp97c02js71opg7l1j9fa7oh5a/);
+  assert.match(location, /gmail\.send/);
+  assert.equal(location.includes('gmail.readonly'), false);
+  assert.equal(location.includes('gmail.compose'), false);
+  assert.equal(location.includes('gmail.modify'), false);
+  assert.match(location, /reply\.kimitotalk\.link%2Foauth%2Fgoogle%2Fcallback/);
+  assert.deepEqual(WIRED_PROVIDERS.map((provider) => provider.id), ['gmail', 'email_routing']);
+  assert.equal(WIRED_PROVIDERS.find((provider) => provider.id === 'gmail').outbound, true);
+  assert.equal(WIRED_PROVIDERS.find((provider) => provider.id === 'email_routing').inbound, true);
+  assert.equal(WIRED_PROVIDERS.find((provider) => provider.id === 'email_routing').outbound, false);
 });
 
 if (fail > 0) {

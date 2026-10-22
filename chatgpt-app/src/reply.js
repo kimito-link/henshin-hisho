@@ -185,7 +185,7 @@ export function handoffFor(channel) {
   if (channel === 'chatwork') {
     return 'この文面は下書きです。Chatworkへの送信は行いません。確認のあと、ご自身で送ってください。';
   }
-  return 'この文面は下書きです。メールの送信は行いません。確認のあと、ご自身で送ってください。';
+  return 'このメールは未送信です。送るときは、カードの「送信」を押してください。';
 }
 
 function greeting(sender) {

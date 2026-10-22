@@ -8,6 +8,7 @@ import {
   unsubscribeDigestByToken,
   updateDigestSettings
 } from './digest.js';
+import { handleInternalReplyDrafts } from './internal-drafts.js';
 import {
   handleConfirmRisk,
   handleDraft,
@@ -248,6 +249,9 @@ export default {
     }
     if (url.pathname === '/inbox/assess' && request.method === 'POST') {
       return await handleInboxAssess(request, env);
+    }
+    if (url.pathname === '/internal/reply-drafts' && request.method === 'POST') {
+      return await handleInternalReplyDrafts(request, env);
     }
 
     const inboxMatch = inboxRouteMatch(url.pathname);

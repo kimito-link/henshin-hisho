@@ -27,7 +27,8 @@ async function test(name, fn) {
 }
 
 await test('無料枠はbackendの原価ガードに載せない理由が残っている', async () => {
-  assert.match(QUOTA_SEPARATION_REASON, /LLMを呼ばない/);
+  assert.match(QUOTA_SEPARATION_REASON, /OpenRouterは呼ばない/);
+  assert.match(QUOTA_SEPARATION_REASON, /定型文/);
   assert.match(QUOTA_SEPARATION_REASON, /cost-guard/);
   assert.match(QUOTA_SEPARATION_REASON, /costGuard/);
 });

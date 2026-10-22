@@ -1,13 +1,12 @@
 import { normalizeEmail, timingSafeEqual, validDeskId } from './http.js';
 
 /**
- * 候補作成は定型文で、OpenRouter を呼ばない。
- * backend/src/cost-guard.js はログイン利用者と D1 の原価予約が前提で、
- * ChatGPT 側の識別子とは別人である。ここに通すと、D1 が無いだけで全停止するか、
- * 別人の LLM 予算を消費する。LLM を足すときは backend の下書き API 越しに costGuard を通す。
+ * アプリの無料枠・有料回数は、LLM を呼ぶかどうかの入口だけを見る。
+ * OpenRouter の原価は backend の下書き API の中の costGuard だけが予約する。
+ * 回数切れ・原価切れ・LLM 失敗のときは定型文に戻す。
  */
 export const QUOTA_SEPARATION_REASON =
-  'chatgpt-appの候補作成はLLMを呼ばない。backendのcost-guardはOpenRouterの原価予約とD1とログイン利用者が前提なので、ChatGPTの無料枠はここには載せない。LLMを呼ぶようにする場合はbackendの下書きAPIの中のcostGuardだけを通す。';
+  'アプリの無料枠は候補作成の入口だけを止める。定型文のときはOpenRouterは呼ばない。LLMの本文はbackendの下書きAPIの中のcostGuardだけを通す。cost-guardはログイン利用者とD1の原価予約が前提で、アプリの回数カウンタとは別人である。';
 
 export const PRICE_YEN = 2980;
 export const ANNUAL_YEN = 29800;

@@ -58,7 +58,7 @@ export function pricePage(noticeKey = '') {
 <main>
   <p>AI返信秘書</p>
   <h1>料金</h1>
-  <p>ChatGPTの中で、受け取った連絡の返信候補・危険度・しおりを扱います。送信はアプリが行わず、確認した文面をご自身で送ります。</p>
+  <p>ChatGPT、Claude、Grok の会話に、メールの作成カードを出します。送信はカードの「送信」を押したときだけです。</p>
   ${notice ? `<p class="notice" role="status">${escapeHtml(notice)}</p>` : ''}
   <section class="card" aria-labelledby="planTitle">
     <h2 id="planTitle">スタンダード</h2>
