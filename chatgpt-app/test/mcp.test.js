@@ -58,6 +58,7 @@ await test('料金ページは月額と特許表示だけを出し、任意のno
   assert.doesNotMatch(html, /index\.html/);
   assert.doesNotMatch(html, /<script>/);
   assert.ok(html.includes(PATENT_LABEL));
+  assert.equal(html.includes('22026'), false);
 });
 
 await test('フォームプレビューは候補ツールと送信しない旨を含む', async () => {
@@ -70,10 +71,11 @@ await test('フォームプレビューは候補ツールと送信しない旨�
   assert.match(html, /相手の気持ち/);
   assert.match(html, /candidate\.emotion/);
   assert.ok(html.includes(PATENT_LABEL));
-  assert.ok(html.includes('特願22026-159882'));
-  assert.ok(html.includes('特願22026-041498'));
+  assert.ok(html.includes('特願2026-159882'));
+  assert.ok(html.includes('特願2026-041498'));
   assert.equal(html.includes('155882'), false);
   assert.equal(html.includes('041494'), false);
+  assert.equal(html.includes('22026'), false);
 });
 
 await test('MCPのツールとUIリソースがつながる', async () => {

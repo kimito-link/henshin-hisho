@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   applyInstruction,
   assessMessage,
@@ -26,19 +29,30 @@ async function test(name, fn) {
 
 await test('出願番号は指定の文字列だけ', async () => {
   assert.deepEqual(PATENT_APPLICATIONS, [
-    '特願22026-159882',
-    '特願22026-040421',
-    '特願22026-041498',
-    '特願22026-206930',
-    '特願22026-227084'
+    '特願2026-159882',
+    '特願2026-040421',
+    '特願2026-041498',
+    '特願2026-206930',
+    '特願2026-227084'
   ]);
   assert.equal(
     PATENT_LABEL,
-    '特許出願中（特願22026-159882・特願22026-040421・特願22026-041498・特願22026-206930・特願22026-227084）'
+    '特許出願中（特願2026-159882・特願2026-040421・特願2026-041498・特願2026-206930・特願2026-227084）'
   );
   assert.equal(PATENT_LABEL.includes('155882'), false);
   assert.equal(PATENT_LABEL.includes('041494'), false);
-  assert.equal(PATENT_LABEL.includes('特願2026-'), false);
+  assert.equal(PATENT_LABEL.includes('22026'), false);
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  for (const relative of [
+    'chatgpt-app/src/reply.js',
+    'chatgpt-app/src/pages.js',
+    'chatgpt-app/src/widget.js',
+    'chatgpt-app/src/mcp.js',
+    'docs/PATENT-MAPPING.md',
+    'docs/CHATGPT-APP.md'
+  ]) {
+    assert.equal(readFileSync(join(root, relative), 'utf8').includes('22026'), false, relative);
+  }
 });
 
 await test('返金は高リスクで、候補は保留だけ', async () => {
