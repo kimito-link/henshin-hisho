@@ -5,6 +5,7 @@ import {
   billingView,
   consumeGeneration,
   createCheckoutSession,
+  QUOTA_SEPARATION_REASON,
   startTrial,
   verifyStripeSignature
 } from '../src/billing.js';
@@ -24,6 +25,12 @@ async function test(name, fn) {
     console.error(error);
   }
 }
+
+await test('無料枠はbackendの原価ガードに載せない理由が残っている', async () => {
+  assert.match(QUOTA_SEPARATION_REASON, /LLMを呼ばない/);
+  assert.match(QUOTA_SEPARATION_REASON, /cost-guard/);
+  assert.match(QUOTA_SEPARATION_REASON, /costGuard/);
+});
 
 await test('お試しは14日で、二度目は延長しない', async () => {
   const env = { CHATGPT_KV: createMemoryKv() };

@@ -1,8 +1,17 @@
 import { clip } from './http.js';
 
-/** 画面に出す出願表示。請求の範囲をここで説明しない。 */
-export const PATENT_LABEL =
-  '特許出願中（特願2026-155882・特願2026-040421・特願2026-041494・特願2026-206930・特願2026-227084）';
+/** 画面に出す出願番号。請求の文言はここに写さない。 */
+export const PATENT_APPLICATIONS = Object.freeze([
+  '特願22026-159882',
+  '特願22026-040421',
+  '特願22026-041498',
+  '特願22026-206930',
+  '特願22026-227084'
+]);
+
+export const PATENT_LABEL = `特許出願中（${PATENT_APPLICATIONS.join('・')}）`;
+
+const ELLIPSIS = /さっきの人|前回の相手|この前の人|先の方|例の人/;
 
 const TONES = new Set(['polite', 'firm', 'calm', 'casual']);
 const CHANNELS = new Set(['email', 'line', 'chatwork', 'other']);
@@ -58,7 +67,61 @@ export function normalizeMessage(input = {}) {
     tone,
     channel,
     discountCeilingPercent: optionalInt(input.discountCeilingPercent, 0, 100),
-    minOrderValueYen: optionalInt(input.minOrderValueYen, 0, 100000000)
+    minOrderValueYen: optionalInt(input.minOrderValueYen, 0, 100000000),
+    forceHolding: input.forceHolding === true
+  };
+}
+
+/** 自然文の指示を、トーン・保留・「さっきの人」に分ける。 */
+export function parseInstruction(text) {
+  const raw = clip(text, 500);
+  let tone = '';
+  if (/丁寧/.test(raw)) tone = 'polite';
+  else if (/はっきり|強め/.test(raw)) tone = 'firm';
+  else if (/冷静/.test(raw)) tone = 'calm';
+  else if (/砕け|カジュアル/.test(raw)) tone = 'casual';
+  const action = /保留|約束しない|まだ決めない/.test(raw) ? 'hold' : 'reply';
+  const focus = raw
+    .replace(ELLIPSIS, '')
+    .replace(/丁寧に|はっきり|冷静に|砕けた調子で|カジュアルに|強めに/g, '')
+    .replace(/返して|返信して|伝えて|送って/g, '')
+    .replace(/[にへ]、?|[、。]/g, '')
+    .trim()
+    .slice(0, 500);
+  return { raw, refersToPrevious: ELLIPSIS.test(raw), tone, action, focus };
+}
+
+/** 「さっきの人」はしおりの直近だけを使う。無いときは相手を作らない。 */
+export function applyInstruction(input = {}, history = []) {
+  const parsed = parseInstruction(input.instruction || input.intent || '');
+  const next = { ...input };
+  if (parsed.tone) next.tone = parsed.tone;
+  if (parsed.focus) next.intent = parsed.focus;
+  if (parsed.action === 'hold') next.forceHolding = true;
+  if (!parsed.refersToPrevious) {
+    return { input: next, instruction: parsed, reference: { resolved: false, refersToPrevious: false } };
+  }
+  const previous = (Array.isArray(history) ? history : []).find((item) => item && (item.sender || item.subject || item.excerpt));
+  if (!previous) {
+    return {
+      input: next,
+      instruction: parsed,
+      reference: { resolved: false, refersToPrevious: true, reason: 'no_previous_person' }
+    };
+  }
+  if (!clip(next.sender, 120)) next.sender = previous.sender || '';
+  if (!clip(next.subject, 200) && previous.subject) next.subject = previous.subject;
+  if (!clip(next.body, 4000) && previous.excerpt) next.body = previous.excerpt;
+  return {
+    input: next,
+    instruction: parsed,
+    reference: {
+      resolved: true,
+      refersToPrevious: true,
+      shioriId: previous.id || '',
+      sender: next.sender || '',
+      subject: next.subject || ''
+    }
   };
 }
 
@@ -177,23 +240,63 @@ function toneOrder(tone) {
   return [tone, rest[0], rest[1]];
 }
 
+export function predictRecipientEmotion(candidate, risk = {}) {
+  if (candidate.holding && candidate.id === 'hold-facts') {
+    return { category: '納得', score: 70, reason: '事実の整理だけなので、相手が話の位置を追いやすい' };
+  }
+  if (candidate.holding && candidate.id === 'hold-boundary') {
+    return { category: '負担', score: 46, reason: '条件を確定しないと先に伝わるので、相手は待ち時間を負担に感じやすい' };
+  }
+  if (candidate.holding) {
+    return { category: '安心', score: 74, reason: '断定や約束を避けているので、相手が期待しすぎにくい' };
+  }
+  if (candidate.tone === 'firm') {
+    return risk.level === 'medium'
+      ? { category: '負担', score: 48, reason: '条件を先に示すので、相手は判断しやすい一方で圧を感じることがある' }
+      : { category: '納得', score: 62, reason: '確定している事実から先に伝えるので、相手が判断しやすい' };
+  }
+  if (candidate.tone === 'calm') {
+    return { category: '納得', score: 71, reason: '状況を整理して返すので、相手が内容を理解しやすい' };
+  }
+  if (candidate.tone === 'casual') {
+    return risk.level === 'low'
+      ? { category: '安心', score: 66, reason: '近い距離の言い方で、相手が構えにくい' }
+      : { category: '困惑', score: 44, reason: 'くだけた調子が、相手には軽く見えることがある' };
+  }
+  return { category: '安心', score: 76, reason: '丁寧な受け答えで、相手が構えにくい' };
+}
+
+function withEmotion(candidate, risk) {
+  return { ...candidate, emotion: predictRecipientEmotion(candidate, risk) };
+}
+
 export function buildCandidates(assessment) {
   const { message, risk, classification } = assessment;
   if (classification === 'notice' || !message.body) return [];
-  if (risk.level === 'high') {
+  if (risk.level === 'high' || message.forceHolding) {
     return [
       { id: 'hold-polite', tone: 'polite', label: '丁寧な保留', holding: true, text: holdingText(message, 'polite') },
       { id: 'hold-facts', tone: 'calm', label: '事実の整理', holding: true, text: holdingText(message, 'facts') },
       { id: 'hold-boundary', tone: 'firm', label: '条件は未確定', holding: true, text: holdingText(message, 'boundary') }
-    ];
+    ].map((candidate) => withEmotion(candidate, risk));
   }
-  return toneOrder(message.tone).map((tone) => ({
-    id: `tone-${tone}`,
-    tone,
-    label: TONE_LABEL[tone],
-    holding: false,
-    text: draftText(message, tone)
-  }));
+  return toneOrder(message.tone)
+    .map((tone) => ({
+      id: `tone-${tone}`,
+      tone,
+      label: TONE_LABEL[tone],
+      holding: false,
+      text: draftText(message, tone)
+    }))
+    .map((candidate) => withEmotion(candidate, risk));
+}
+
+/** コピー直前に、作成時の文面と危険度がまだ同じかを見る。 */
+export function compareSnapshot(snapshot, review) {
+  if (!snapshot || !Array.isArray(snapshot.texts)) return { ok: false, reason: 'state_mismatch' };
+  if (snapshot.riskLevel !== review.riskLevel) return { ok: false, reason: 'state_mismatch' };
+  if (!snapshot.texts.includes(review.copyText)) return { ok: false, reason: 'state_mismatch' };
+  return { ok: true };
 }
 
 /** 人がチェックしたあとにだけ、コピー用の文面を返す。送信はしない。 */

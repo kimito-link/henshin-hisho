@@ -1,6 +1,6 @@
 import { billingView, consumeGeneration, PRICE_YEN, startTrial } from './billing.js';
 import { mcpCorsHeaders, publicOrigin, validDeskId } from './http.js';
-import { assessMessage, buildCandidates, handoffFor, PATENT_LABEL, reviewConfirmation } from './reply.js';
+import { applyInstruction, assessMessage, buildCandidates, compareSnapshot, handoffFor, PATENT_LABEL, reviewConfirmation } from './reply.js';
 import { listShiori, saveShiori } from './shiori.js';
 import { WIDGET_HTML } from './widget.js';
 
@@ -31,7 +31,7 @@ const TOOLS = [
     name: 'propose_replies',
     title: '返信候補を作る',
     description:
-      '本文から危険度（点数と理由）と返信候補を作る。通知メールは返信候補を作らず振り分ける。高リスクは保留表現だけにする。送信はしない。',
+      '本文と自然文の指示から、危険度（点数と理由）と返信候補を作る。各候補に、相手が受け取りそうな気持ち（分類・点数・理由）を付ける。「さっきの人」はしおりの直近に解決し、無いときは推測しない。通知メールは返信候補を作らず振り分ける。高リスクは保留表現だけにする。送信はしない。',
     inputSchema: messageSchema(),
     _meta: UI_META
   },
@@ -63,7 +63,7 @@ const TOOLS = [
     name: 'confirm_candidate',
     title: '確認してコピー用の文面を渡す',
     description:
-      '人が確認チェックを入れた後だけ、コピー用の文面を返す。高リスクはリスク確認も必須。このツールは送信しない。アプリのフォームからのみ呼ぶ。',
+      '人が確認チェックを入れた後だけ、コピー用の文面を返す。作成時に保存した文面と危険度を取り直し、不一致なら文面を渡さず再確認を求める。高リスクはリスク確認も必須。送信はしない。アプリのフォームからのみ呼ぶ。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -169,7 +169,29 @@ async function present(env, input, origin, extra = {}) {
     sent: false
   };
   if (Object.prototype.hasOwnProperty.call(extra, 'candidates')) payload.candidates = extra.candidates;
+  if (extra.reference) payload.reference = extra.reference;
+  if (extra.instruction) payload.instruction = extra.instruction;
+  if (extra.snapshotId !== undefined) payload.snapshotId = extra.snapshotId;
+  if (extra.stateCheck) payload.stateCheck = extra.stateCheck;
   return payload;
+}
+
+async function prepareInput(env, input) {
+  const listed = await listShiori(env, input);
+  return applyInstruction(input, listed.items || []);
+}
+
+async function storeSnapshot(env, assessment, candidates) {
+  if (!candidates.length) return { snapshotId: '', stateCheck: 'not_needed' };
+  const snapshotId = crypto.randomUUID();
+  const snapshot = {
+    id: snapshotId,
+    riskLevel: assessment.risk.level,
+    texts: candidates.map((candidate) => candidate.text)
+  };
+  if (!env.CHATGPT_KV) return { snapshotId, stateCheck: 'not_stored' };
+  await env.CHATGPT_KV.put(`snapshot:${snapshotId}`, JSON.stringify(snapshot), { expirationTtl: 86400 });
+  return { snapshotId, stateCheck: 'stored' };
 }
 
 function toolResult(payload, text) {
@@ -187,22 +209,26 @@ async function callTool(env, name, args, origin) {
     return toolResult(payload, '返信候補フォームを開きました。送信はしていません。');
   }
   if (name === 'propose_replies') {
-    const assessment = assessMessage(input);
+    const prepared = await prepareInput(env, input);
+    const source = prepared.input;
+    const context = { reference: prepared.reference, instruction: prepared.instruction };
+    const assessment = assessMessage(source);
     if (!assessment.message.body) {
-      const payload = await present(env, input, origin, { ok: false, reason: 'empty_message', candidates: [] });
+      const payload = await present(env, source, origin, { ok: false, reason: 'empty_message', candidates: [], ...context });
       return toolResult(payload, '本文が空です。送信はしていません。');
     }
     if (assessment.classification === 'notice') {
-      const payload = await present(env, input, origin, { candidates: [] });
+      const payload = await present(env, source, origin, { candidates: [], ...context });
       return toolResult(payload, '通知メールとして振り分けました。返信候補は作っていません。送信はしていません。');
     }
-    const gate = await consumeGeneration(env, input);
+    const gate = await consumeGeneration(env, source);
     if (!gate.ok) {
-      const payload = await present(env, input, origin, {
+      const payload = await present(env, source, origin, {
         ok: false,
         reason: gate.reason,
         billing: gate.billing,
-        candidates: []
+        candidates: [],
+        ...context
       });
       return toolResult(
         payload,
@@ -210,10 +236,18 @@ async function callTool(env, name, args, origin) {
       );
     }
     const candidates = buildCandidates(assessment);
-    const payload = await present(env, input, origin, { candidates, billing: gate.billing });
+    const snapshot = await storeSnapshot(env, assessment, candidates);
+    const payload = await present(env, source, origin, {
+      candidates,
+      billing: gate.billing,
+      snapshotId: snapshot.snapshotId,
+      stateCheck: snapshot.stateCheck,
+      ...context
+    });
+    const who = prepared.reference.resolved ? `さっきの人は${prepared.reference.sender || 'しおりの相手'}に解決しました。` : '';
     return toolResult(
       payload,
-      `返信候補を${candidates.length}件作りました。危険度は${assessment.risk.level}（${assessment.risk.score}）。送信はしていません。`
+      `返信候補を${candidates.length}件作りました。各候補に相手の気持ち（分類・点数・理由）を付けました。危険度は${assessment.risk.level}（${assessment.risk.score}）。${who}送信はしていません。`
     );
   }
   if (name === 'save_shiori') {
@@ -234,6 +268,32 @@ async function callTool(env, name, args, origin) {
         '確認が足りないため、文面を渡していません。送信はしていません。'
       );
     }
+    let stateCheck = 'not_stored';
+    if (env.CHATGPT_KV) {
+      const snapshotId = String(input.snapshotId || '');
+      const raw = snapshotId ? await env.CHATGPT_KV.get(`snapshot:${snapshotId}`) : null;
+      let snapshot = null;
+      try {
+        snapshot = raw ? JSON.parse(raw) : null;
+      } catch {
+        snapshot = null;
+      }
+      const compared = compareSnapshot(snapshot, review);
+      if (!compared.ok) {
+        return toolResult(
+          {
+            ok: false,
+            reason: 'state_mismatch',
+            reconfirm: true,
+            sent: false,
+            priceUrl: `${origin}/price/`,
+            patentLabel: PATENT_LABEL
+          },
+          '内容が変わったため、コピー用の文面は渡していません。候補を作り直して、もう一度確認してください。送信はしていません。'
+        );
+      }
+      stateCheck = 'matched';
+    }
     const id = crypto.randomUUID();
     if (env.CHATGPT_KV) {
       await env.CHATGPT_KV.put(
@@ -243,7 +303,8 @@ async function callTool(env, name, args, origin) {
           at: Date.now(),
           riskLevel: review.riskLevel,
           channel: input.channel || 'email',
-          sent: false
+          sent: false,
+          stateCheck
         })
       );
     }
@@ -253,6 +314,7 @@ async function callTool(env, name, args, origin) {
         copyText: review.copyText,
         confirmation: { id, sent: false },
         handoff: handoffFor(input.channel),
+        stateCheck,
         sent: false,
         priceUrl: `${origin}/price/`,
         patentLabel: PATENT_LABEL

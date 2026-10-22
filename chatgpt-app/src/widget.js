@@ -15,7 +15,9 @@ const REASONS = {
   trial_used: 'このメールアドレスのお試しは終了しています。',
   invalid_email: 'メールアドレスの形式を確認してください。',
   trial_busy: 'お試しの開始が集中しています。',
-  owner_required: 'しおりの持ち主を決められません。'
+  owner_required: 'しおりの持ち主を決められません。',
+  no_previous_person: '「さっきの人」に当たるしおりがありません。',
+  state_mismatch: '内容が変わったので、候補を作り直して、もう一度確認してください。'
 };
 
 export const WIDGET_HTML = `<!doctype html>
@@ -43,8 +45,11 @@ export const WIDGET_HTML = `<!doctype html>
   button { border: 0; border-radius: 10px; padding: 12px 14px; font-size: 16px; font-weight: 700; background: #1d4ed8; color: #fff; cursor: pointer; }
   button.secondary { background: #fff; color: #1d4ed8; border: 1px solid #1d4ed8; }
   button:disabled { opacity: 0.6; cursor: not-allowed; }
-  .candidates { display: grid; gap: 12px; }
-  @media (min-width: 900px) { .candidates { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .compare, .candidates { display: grid; gap: 12px; }
+  .emotion { margin: 8px 0; padding: 8px; border-radius: 10px; background: #eef2ff; font-size: 0.92rem; }
+  @media (min-width: 900px) {
+    .compare, .candidates { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
   article { border: 1px solid #dbe3ef; border-radius: 14px; padding: 12px; background: #fff; }
   article.selected { border-color: #1d4ed8; box-shadow: inset 0 0 0 1px #1d4ed8; }
   .meter { height: 10px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
@@ -71,6 +76,7 @@ export const WIDGET_HTML = `<!doctype html>
   <p>AI返信秘書</p>
   <h1>返信候補</h1>
   <p id="handoffLine" class="handoff">受け取った連絡を貼ると、危険度と返信候補を並べます。送信は行いません。</p>
+  <p id="referenceLine" class="handoff"></p>
   <form id="deskForm">
     <div class="grid two">
       <label>差出人<input id="pasteSender" name="sender" type="text" autocomplete="name" placeholder="山田さん" /></label>
@@ -102,7 +108,7 @@ export const WIDGET_HTML = `<!doctype html>
       <input id="pasteEmail" name="email" type="email" autocomplete="email" />
     </label>
     <div class="actions">
-      <button id="proposeButton" type="submit">危険度を見て候補を作る</button>
+      <button id="proposeButton" type="submit">危険度と相手の気持ちを見て候補を作る</button>
       <button id="shioriButton" class="secondary" type="button">しおりに残す</button>
       <button id="trialButton" class="secondary" type="button">お試しを始める</button>
       <button id="priceButton" class="secondary" type="button">料金を見る</button>
@@ -117,6 +123,8 @@ export const WIDGET_HTML = `<!doctype html>
   </section>
   <section id="candidateCard" class="card" hidden>
     <h2>見比べる</h2>
+    <p class="handoff">相手が受け取りそうな気持ちです。点数は規則による予測で、相手に聞いた結果ではありません。</p>
+    <div id="emotionCompare" class="compare"></div>
     <div id="candidateList" class="candidates"></div>
     <label id="humanRow" class="check"><input id="humanCheck" type="checkbox" /> 送信前に内容を確認しました。この文面をコピーします。</label>
     <label id="riskRow" class="check" hidden><input id="riskCheck" type="checkbox" /> 高リスクのため、約束や断定をしないことを確認しました。</label>
@@ -221,6 +229,7 @@ function payloadFromForm() {
     tone: $('pasteTone').value,
     body: $('pasteBody').value,
     intent: $('pasteIntent').value,
+    instruction: $('pasteIntent').value,
     discountCeilingPercent: $('pasteDiscount').value,
     minOrderValueYen: $('pasteMinOrder').value,
     email: $('pasteEmail').value
@@ -278,6 +287,12 @@ function resetConfirmation() {
 function render() {
   const risk = view.risk;
   $('handoffLine').textContent = view.handoff || '受け取った連絡を貼ると、危険度と返信候補を並べます。送信は行いません。';
+  const reference = view.reference;
+  $('referenceLine').textContent = reference && reference.refersToPrevious
+    ? (reference.resolved
+      ? '「さっきの人」はしおりの' + (reference.sender || '相手') + 'に解決しました。'
+      : '「さっきの人」に当たるしおりがありません。相手は推測していません。')
+    : '';
   $('billingLine').textContent = billingText(view.billing);
   if (view.priceUrl) priceUrl = view.priceUrl;
   const riskCard = $('riskCard');
@@ -311,8 +326,15 @@ function render() {
   const candidates = view.candidates || [];
   candidateCard.hidden = candidates.length === 0;
   $('riskRow').hidden = !risk || risk.level !== 'high';
+  const compare = $('emotionCompare');
+  compare.replaceChildren();
   candidates.forEach((candidate) => {
+    const emotion = candidate.emotion || {};
     texts.set(candidate.id, candidate.text);
+    const cell = document.createElement('p');
+    cell.className = 'emotion';
+    cell.textContent = candidate.label + '：' + (emotion.category || '') + ' ' + (emotion.score ?? '') + ' / 100。' + (emotion.reason || '');
+    compare.appendChild(cell);
     const article = document.createElement('article');
     const choice = document.createElement('label');
     choice.className = 'check';
@@ -329,9 +351,12 @@ function render() {
     const name = document.createElement('span');
     name.textContent = candidate.label + (candidate.holding ? '（保留）' : '');
     choice.append(radio, name);
+    const feeling = document.createElement('p');
+    feeling.className = 'emotion';
+    feeling.textContent = '相手の気持ち：' + (emotion.category || '') + ' ' + (emotion.score ?? '') + ' / 100。' + (emotion.reason || '');
     const body = document.createElement('p');
     body.textContent = candidate.text;
-    article.append(choice, body);
+    article.append(choice, feeling, body);
     list.appendChild(article);
   });
   const shiori = $('shioriList');
@@ -451,7 +476,8 @@ $('confirmButton').addEventListener('click', () => {
     humanConfirmed: $('humanCheck').checked === true,
     riskAcknowledged: $('riskCheck').checked === true,
     riskLevel: (view.risk && view.risk.level) || 'unknown',
-    channel: $('pasteChannel').value
+    channel: $('pasteChannel').value,
+    snapshotId: view.snapshotId || ''
   }, '確認を記録しています。');
 });
 

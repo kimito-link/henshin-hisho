@@ -67,7 +67,13 @@ await test('フォームプレビューは候補ツールと送信しない旨�
   assert.match(html, /confirm_candidate/);
   assert.match(html, /送信は行いません/);
   assert.match(html, /ui\/initialize/);
+  assert.match(html, /相手の気持ち/);
+  assert.match(html, /candidate\.emotion/);
   assert.ok(html.includes(PATENT_LABEL));
+  assert.ok(html.includes('特願22026-159882'));
+  assert.ok(html.includes('特願22026-041498'));
+  assert.equal(html.includes('155882'), false);
+  assert.equal(html.includes('041494'), false);
 });
 
 await test('MCPのツールとUIリソースがつながる', async () => {
@@ -112,6 +118,62 @@ await test('しおり保存は候補リストを上書きしない', async () =>
   assert.equal(Object.hasOwn(saved.body.result.structuredContent, 'candidates'), false);
   assert.equal(saved.body.result.structuredContent.shiori.length, 1);
   assert.equal(saved.body.result.structuredContent.sent, false);
+});
+
+await test('確認は作成時の状態を取り直し、違う文面は渡さない', async () => {
+  const env = envWithKv();
+  const proposed = await rpc(env, 'tools/call', {
+    name: 'propose_replies',
+    arguments: { sender: '佐藤', subject: '挨拶', body: '明日の会議の件です', deskId: 'desk-state-01' }
+  });
+  const data = proposed.body.result.structuredContent;
+  assert.equal(data.stateCheck, 'stored');
+  assert.ok(data.snapshotId);
+  assert.ok(data.candidates[0].emotion.category);
+  const confirmed = await rpc(env, 'tools/call', {
+    name: 'confirm_candidate',
+    arguments: {
+      text: data.candidates[0].text,
+      humanConfirmed: true,
+      riskLevel: data.risk.level,
+      snapshotId: data.snapshotId,
+      channel: 'email'
+    }
+  });
+  assert.equal(confirmed.body.result.structuredContent.ok, true);
+  assert.equal(confirmed.body.result.structuredContent.stateCheck, 'matched');
+  assert.equal(confirmed.body.result.structuredContent.sent, false);
+  const changed = await rpc(env, 'tools/call', {
+    name: 'confirm_candidate',
+    arguments: {
+      text: `${data.candidates[0].text}\n追記`,
+      humanConfirmed: true,
+      riskLevel: data.risk.level,
+      snapshotId: data.snapshotId
+    }
+  });
+  assert.equal(changed.body.result.structuredContent.reason, 'state_mismatch');
+  assert.equal(changed.body.result.structuredContent.reconfirm, true);
+  assert.equal(changed.body.result.structuredContent.copyText, undefined);
+  assert.equal(changed.body.result.structuredContent.sent, false);
+});
+
+await test('さっきの人はしおりから解決する', async () => {
+  const env = envWithKv();
+  await rpc(env, 'tools/call', {
+    name: 'save_shiori',
+    arguments: { sender: '山田', subject: '納期の確認', body: '来週の納期を確認したいです。', deskId: 'desk-ellipsis1' }
+  });
+  const proposed = await rpc(env, 'tools/call', {
+    name: 'propose_replies',
+    arguments: { instruction: 'さっきの人に、納期だけ先に丁寧に返して', deskId: 'desk-ellipsis1' }
+  });
+  const data = proposed.body.result.structuredContent;
+  assert.equal(data.reference.resolved, true);
+  assert.equal(data.sender, '山田');
+  assert.equal(data.tone, 'polite');
+  assert.ok(data.candidates.length >= 1);
+  assert.ok(data.candidates.every((candidate) => candidate.emotion && candidate.emotion.reason));
 });
 
 await test('通知はプレビュー回数を使わない', async () => {
