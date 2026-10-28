@@ -4,6 +4,7 @@ var SHELL_FILES = [
   './styles.css',
   './app.js',
   './billing/billing.js',
+  './billing/plans.js',
   './manifest.webmanifest'
 ];
 

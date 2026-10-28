@@ -1,4 +1,5 @@
 import { ANNUAL_YEN, PRICE_YEN, TRIAL_DAYS } from './billing.js';
+import { OPERATOR_NAME } from '../../shared/plans.js';
 import { PATENT_LABEL } from './reply.js';
 
 const NOTICES = {
@@ -58,12 +59,12 @@ export function pricePage(noticeKey = '') {
 <main>
   <p>AI返信秘書</p>
   <h1>料金</h1>
-  <p>ChatGPT、Claude、Grok の会話に、メールの作成カードを出します。送信はカードの「送信」を押したときだけです。</p>
+  <p>一つの契約で、ChatGPT、Claude、Grok の作成カードと、Web、iPhone、Android が使えます。送信は、カードの「送信」を押したときだけです。</p>
   ${notice ? `<p class="notice" role="status">${escapeHtml(notice)}</p>` : ''}
   <section class="card" aria-labelledby="planTitle">
     <h2 id="planTitle">スタンダード</h2>
     <p class="price">${PRICE_YEN.toLocaleString('ja-JP')}<span>円 / 月</span></p>
-    <p>年額でまとめる場合は ${ANNUAL_YEN.toLocaleString('ja-JP')}円です。お試しは${TRIAL_DAYS}日間で、期間中はいつでも止められます。</p>
+    <p>年額は ${ANNUAL_YEN.toLocaleString('ja-JP')}円です。お試しは${TRIAL_DAYS}日間です。期間のあとは、続けるかどうかを選べます。</p>
     <ul>
       <li>返信候補をトーン別に見比べる</li>
       <li>危険度と理由を、コピーする前に表示する</li>
@@ -81,13 +82,23 @@ export function pricePage(noticeKey = '') {
     </form>
   </section>
   <section class="card" aria-labelledby="payTitle">
-    <h2 id="payTitle">月額プランの支払い</h2>
+    <h2 id="payTitle">月額と年額</h2>
+    <p>Web と作成カードの支払いは、ここで同じ料金を使います。iPhone と Android は、それぞれのストアの定期購入です。どの画面で申し込んでも、同じメールアドレスの契約が開きます。</p>
     <form method="post" action="/billing/checkout">
+      <input type="hidden" name="plan" value="monthly" />
       <label>メールアドレス
         <input name="email" type="email" autocomplete="email" required />
       </label>
-      <button class="secondary" type="submit">支払いへ進む</button>
+      <button class="secondary" type="submit">月額 ${PRICE_YEN.toLocaleString('ja-JP')}円で始める</button>
     </form>
+    <form method="post" action="/billing/checkout">
+      <input type="hidden" name="plan" value="annual" />
+      <label>メールアドレス
+        <input name="email" type="email" autocomplete="email" required />
+      </label>
+      <button class="secondary" type="submit">年額 ${ANNUAL_YEN.toLocaleString('ja-JP')}円で始める</button>
+    </form>
+    <p>運営は${OPERATOR_NAME}です。</p>
   </section>
   <p class="patent">${PATENT_LABEL}</p>
 </main>

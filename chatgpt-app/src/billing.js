@@ -1,4 +1,8 @@
+import { applyMergedPlan, mergeEntitlement, withSource } from '../../shared/entitlement.js';
+import { ANNUAL_YEN, planById, PRICE_YEN, TRIAL_DAYS } from '../../shared/plans.js';
 import { normalizeEmail, timingSafeEqual, validDeskId } from './http.js';
+
+export { ANNUAL_YEN, PRICE_YEN, TRIAL_DAYS };
 
 /**
  * アプリの無料枠・有料回数は、LLM を呼ぶかどうかの入口だけを見る。
@@ -8,9 +12,6 @@ import { normalizeEmail, timingSafeEqual, validDeskId } from './http.js';
 export const QUOTA_SEPARATION_REASON =
   'アプリの無料枠は候補作成の入口だけを止める。定型文のときはOpenRouterは呼ばない。LLMの本文はbackendの下書きAPIの中のcostGuardだけを通す。cost-guardはログイン利用者とD1の原価予約が前提で、アプリの回数カウンタとは別人である。';
 
-export const PRICE_YEN = 2980;
-export const ANNUAL_YEN = 29800;
-export const TRIAL_DAYS = 14;
 const TRIAL_SECONDS = TRIAL_DAYS * 24 * 60 * 60;
 const TRIAL_LIMIT = 60;
 const ACTIVE_MONTHLY_LIMIT = 1500;
@@ -32,20 +33,12 @@ export function entitlementKey(email) {
 }
 
 export function resolvePlan(record = {}, nowMs = Date.now()) {
-  const now = Math.floor(nowMs / 1000);
-  const currentPeriodEnd = Number(record.currentPeriodEnd || 0);
-  if (record.plan === 'active' && (!currentPeriodEnd || currentPeriodEnd > now)) {
-    return { plan: 'active', trialDaysRemaining: 0, currentPeriodEnd };
-  }
-  if (Number(record.trialEndsAt || 0) > now) {
-    return {
-      plan: 'trial',
-      trialDaysRemaining: Math.max(0, Math.ceil((record.trialEndsAt - now) / 86400)),
-      currentPeriodEnd
-    };
-  }
-  if (record.plan || record.trialEndsAt) return { plan: 'expired', trialDaysRemaining: 0, currentPeriodEnd };
-  return { plan: 'none', trialDaysRemaining: 0, currentPeriodEnd };
+  const merged = mergeEntitlement(record, nowMs);
+  return {
+    plan: merged.plan,
+    trialDaysRemaining: merged.trialDaysRemaining,
+    currentPeriodEnd: merged.currentPeriodEnd
+  };
 }
 
 async function readJson(env, key) {
@@ -139,15 +132,18 @@ export async function consumeGeneration(env, input = {}, nowMs = Date.now()) {
   return { ok: true, billing: { ...billing, previewRemaining: PREVIEW_DAILY_LIMIT - used } };
 }
 
-export async function createCheckoutSession(env, { email, origin, fetchImpl = fetch }) {
+export async function createCheckoutSession(env, { email, origin, planId = 'monthly', fetchImpl = fetch }) {
   const normalized = normalizeEmail(email);
+  const plan = planById(planId);
+  const priceId = env[plan.stripeEnv];
   if (!normalized) return { ok: false, status: 400, reason: 'invalid_email' };
-  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_PRICE_ID) {
+  if (!env.STRIPE_SECRET_KEY || !priceId) {
     return { ok: false, status: 503, reason: 'stripe_not_configured' };
   }
   const body = new URLSearchParams();
   body.set('mode', 'subscription');
-  body.set('line_items[0][price]', env.STRIPE_PRICE_ID);
+  body.set('line_items[0][price]', priceId);
+  body.set('metadata[plan]', plan.id);
   body.set('line_items[0][quantity]', '1');
   body.set('customer_email', normalized);
   body.set('client_reference_id', normalized);
@@ -174,17 +170,53 @@ export async function createCheckoutSession(env, { email, origin, fetchImpl = fe
   return { ok: true, url: payload.url };
 }
 
-async function activateEmail(env, email, { currentPeriodEnd, stripeCustomerId }, nowMs) {
+export async function publishEntitlement(env, record) {
+  if (!env.BACKEND_URL || !env.INTERNAL_ENTITLEMENT_TOKEN || !record?.email) return { ok: false, skipped: true };
+  const fetchImpl = env.ENTITLEMENT_FETCH || fetch;
+  try {
+    const response = await fetchImpl(`${String(env.BACKEND_URL).replace(/\/$/, '')}/internal/entitlement`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.INTERNAL_ENTITLEMENT_TOKEN}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ email: record.email, entitlement: record })
+    });
+    return { ok: response.ok };
+  } catch {
+    return { ok: false, reason: 'backend_unreachable' };
+  }
+}
+
+export async function upsertEntitlementSource(env, email, sourceName, source, nowMs = Date.now()) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return { ok: false, reason: 'invalid_email' };
+  if (!env.CHATGPT_KV) return { ok: false, reason: 'storage_not_configured' };
+  const previous = (await readJson(env, entitlementKey(normalized))) || { email: normalized };
+  const stored = await saveEntitlement(env, normalized, withSource(previous, sourceName, source), nowMs);
+  return { ok: true, email: normalized, record: stored };
+}
+
+async function saveEntitlement(env, email, record, nowMs) {
+  const stored = applyMergedPlan({ ...record, email }, nowMs);
+  await writeJson(env, entitlementKey(email), stored);
+  await publishEntitlement(env, stored);
+  return stored;
+}
+
+async function activateEmail(env, email, { currentPeriodEnd, stripeCustomerId, planId }, nowMs) {
   const previous = (await readJson(env, entitlementKey(email))) || {};
-  await writeJson(env, entitlementKey(email), {
-    ...previous,
-    email,
-    plan: 'active',
-    currentPeriodEnd,
-    stripeCustomerId: stripeCustomerId || previous.stripeCustomerId || '',
-    trialEndsAt: previous.trialEndsAt || 0,
-    updatedAt: Math.floor(nowMs / 1000)
-  });
+  const next = withSource(
+    {
+      ...previous,
+      email,
+      stripeCustomerId: stripeCustomerId || previous.stripeCustomerId || '',
+      trialEndsAt: previous.trialEndsAt || 0
+    },
+    'stripe',
+    { active: true, currentPeriodEnd, customerId: stripeCustomerId || previous.stripeCustomerId || '', planId: planId || 'monthly' }
+  );
+  await saveEntitlement(env, email, next, nowMs);
   if (stripeCustomerId) await env.CHATGPT_KV.put(`stripe-customer:${stripeCustomerId}`, email);
 }
 
@@ -198,7 +230,11 @@ export async function applyStripeEvent(env, event, nowMs = Date.now()) {
     await activateEmail(
       env,
       email,
-      { currentPeriodEnd: Math.floor(nowMs / 1000) + 32 * 86400, stripeCustomerId: session.customer || '' },
+      {
+        currentPeriodEnd: Math.floor(nowMs / 1000) + 32 * 86400,
+        stripeCustomerId: session.customer || '',
+        planId: session.metadata?.plan || 'monthly'
+      },
       nowMs
     );
     return { ok: true, email };
@@ -220,12 +256,12 @@ export async function applyStripeEvent(env, event, nowMs = Date.now()) {
       );
     } else {
       const previous = (await readJson(env, entitlementKey(email))) || { email };
-      await writeJson(env, entitlementKey(email), {
-        ...previous,
-        email,
-        plan: 'expired',
-        currentPeriodEnd: Math.floor(nowMs / 1000)
+      const next = withSource(previous, 'stripe', {
+        active: false,
+        currentPeriodEnd: Math.floor(nowMs / 1000),
+        customerId
       });
+      await saveEntitlement(env, email, next, nowMs);
     }
     return { ok: true, email };
   }

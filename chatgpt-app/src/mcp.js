@@ -4,7 +4,8 @@ import { generateCandidates } from './drafts.js';
 import { buildGoogleAuthUrl } from './gmail.js';
 import { deliverReply, resolveReplySender, senderFields } from './mail/send.js';
 import { threadRecipients } from './mail/threads.js';
-import { mcpCorsHeaders, publicOrigin, validDeskId } from './http.js';
+import { mcpCorsHeaders, normalizeEmail, publicOrigin, validDeskId } from './http.js';
+import { accessTokenRecord } from './mcp-oauth.js';
 import { getIncoming, listIncoming } from './incoming.js';
 import { applyInstruction, assessMessage, buildCandidates, compareSnapshot, handoffFor, PATENT_LABEL, reviewConfirmation } from './reply.js';
 import { listShiori, saveShiori } from './shiori.js';
@@ -319,8 +320,9 @@ async function loadSnapshot(env, id) {
   }
 }
 
-async function callTool(env, name, args, origin) {
-  const input = args && typeof args === 'object' ? args : {};
+async function callTool(env, name, args, origin, accountEmail = '') {
+  const input = { ...(args && typeof args === 'object' ? args : {}) };
+  if (accountEmail) input.email = accountEmail;
   if (name === 'open_reply_desk') {
     const payload = await present(env, input, origin, { candidates: [] });
     return toolResult(payload);
@@ -558,7 +560,11 @@ export async function handleMcpRequest(request, env) {
   }
   if (method === 'tools/call') {
     try {
-      const result = await callTool(env, params?.name, params?.arguments, origin);
+      const header = request.headers.get('authorization') || '';
+      const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+      const access = await accessTokenRecord(env, bearer);
+      const accountEmail = normalizeEmail(access?.accountEmail || '');
+      const result = await callTool(env, params?.name, params?.arguments, origin, accountEmail);
       console.log(JSON.stringify({ event: 'mcp_tool', tool: params?.name || '', ok: result?.structuredContent?.ok !== false }));
       return respond(request, rpcResult(id, result));
     } catch (error) {

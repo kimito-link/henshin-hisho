@@ -8,6 +8,40 @@
 //
 // v2 pricing API(2023導入)を使う。v1 /v1/appPrices は read-only。
 // 冪等: 既に手動価格スケジュールがあればスキップ。
+//
+// 定期購入の商品定義は subscriptionCatalog()。既定は dry-run で、ストアへは送らない。
+
+import { APPLE_BUNDLE_ID, PLANS } from '../../../shared/plans.js';
+
+export function subscriptionCatalog() {
+  return {
+    bundleId: APPLE_BUNDLE_ID,
+    groupReferenceName: 'henshin-hisho',
+    groupName: '返信秘書',
+    products: PLANS.map((plan) => ({
+      productId: plan.appleProductId,
+      referenceName: plan.id,
+      priceYen: plan.priceYen,
+      currency: 'JPY',
+      interval: plan.interval,
+      subscriptionPeriod: plan.interval === 'year' ? 'ONE_YEAR' : 'ONE_MONTH'
+    }))
+  };
+}
+
+export function subscriptionRequests(appId) {
+  const catalog = subscriptionCatalog();
+  return {
+    dryRun: true,
+    appId: appId || null,
+    note: 'App Store Connect へは送りません。--apply を付けても、APPLY_STORE_CHANGES=1 が無い限り送信しません。',
+    catalog,
+    steps: [
+      'POST /v1/subscriptionGroups',
+      ...catalog.products.map((product) => `POST /v1/subscriptions (${product.productId}, ${product.priceYen} JPY / ${product.interval})`)
+    ]
+  };
+}
 
 // このアプリの無料ティア(USD $0.00)の appPricePoint id を探す。
 async function findFreePricePoint(api, appId) {

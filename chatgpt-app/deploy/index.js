@@ -1,6 +1,110 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
+// ../shared/entitlement.js
+function mergeEntitlement(record = {}, nowMs = Date.now()) {
+  const now = Math.floor(nowMs / 1e3);
+  const sources = record.sources && typeof record.sources === "object" ? record.sources : null;
+  const sourceNames = sources ? Object.keys(sources) : [];
+  let activeEnd = null;
+  if (sourceNames.length > 0) {
+    for (const source of Object.values(sources)) {
+      if (!source?.active) continue;
+      const end = Number(source.currentPeriodEnd || 0);
+      if (!end || end > now) {
+        if (!end || activeEnd === 0) activeEnd = 0;
+        else activeEnd = activeEnd == null ? end : Math.max(activeEnd, end);
+      }
+    }
+  } else if (record.plan === "active") {
+    const end = Number(record.currentPeriodEnd || 0);
+    if (!end || end > now) activeEnd = end;
+  }
+  if (activeEnd != null) {
+    return { plan: "active", trialDaysRemaining: 0, currentPeriodEnd: activeEnd, unlocked: true };
+  }
+  const trialEndsAt = Number(record.trialEndsAt || 0);
+  if (trialEndsAt > now) {
+    return {
+      plan: "trial",
+      trialDaysRemaining: Math.max(0, Math.ceil((trialEndsAt - now) / 86400)),
+      currentPeriodEnd: Number(record.currentPeriodEnd || 0),
+      unlocked: true
+    };
+  }
+  if (record.plan || record.trialEndsAt || sourceNames.length > 0) {
+    return {
+      plan: "expired",
+      trialDaysRemaining: 0,
+      currentPeriodEnd: Number(record.currentPeriodEnd || 0),
+      unlocked: false
+    };
+  }
+  return { plan: "none", trialDaysRemaining: 0, currentPeriodEnd: 0, unlocked: false };
+}
+__name(mergeEntitlement, "mergeEntitlement");
+function withSource(record = {}, name, source) {
+  return {
+    ...record,
+    sources: {
+      ...record.sources || {},
+      [name]: { ...record.sources?.[name] || {}, ...source }
+    }
+  };
+}
+__name(withSource, "withSource");
+function applyMergedPlan(record = {}, nowMs = Date.now()) {
+  const merged = mergeEntitlement(record, nowMs);
+  return {
+    ...record,
+    plan: merged.plan,
+    currentPeriodEnd: merged.currentPeriodEnd,
+    updatedAt: Math.floor(nowMs / 1e3)
+  };
+}
+__name(applyMergedPlan, "applyMergedPlan");
+
+// ../web-app/billing/plans.js
+var APPLE_BUNDLE_ID = "jp.besttrust.henshinhisho";
+var PLAY_PACKAGE_NAME = "jp.besttrust.henshinhisho";
+var APPLE_ROOT_CA_G3_SHA256 = "63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179";
+var OPERATOR_NAME = "\u682A\u5F0F\u4F1A\u793E\u30D9\u30B9\u30C8\u30C8\u30E9\u30B9\u30C8";
+var PRICE_YEN = 2980;
+var ANNUAL_YEN = 29800;
+var TRIAL_DAYS = 14;
+var PLANS = Object.freeze([
+  Object.freeze({
+    id: "monthly",
+    label: "\u6708\u984D",
+    interval: "month",
+    priceYen: PRICE_YEN,
+    stripeEnv: "STRIPE_PRICE_ID",
+    appleProductId: "jp.besttrust.henshinhisho.monthly",
+    playProductId: "henshin_hisho",
+    playBasePlanId: "monthly",
+    playBillingPeriod: "P1M"
+  }),
+  Object.freeze({
+    id: "annual",
+    label: "\u5E74\u984D",
+    interval: "year",
+    priceYen: ANNUAL_YEN,
+    stripeEnv: "STRIPE_ANNUAL_PRICE_ID",
+    appleProductId: "jp.besttrust.henshinhisho.annual",
+    playProductId: "henshin_hisho",
+    playBasePlanId: "annual",
+    playBillingPeriod: "P1Y"
+  })
+]);
+function planById(id) {
+  return PLANS.find((plan) => plan.id === id) || PLANS[0];
+}
+__name(planById, "planById");
+function planByAppleProduct(productId) {
+  return PLANS.find((plan) => plan.appleProductId === productId) || null;
+}
+__name(planByAppleProduct, "planByAppleProduct");
+
 // src/http.js
 function timingSafeEqual(a, b) {
   const bufA = new TextEncoder().encode(String(a || ""));
@@ -127,9 +231,6 @@ function mcpCorsHeaders() {
 __name(mcpCorsHeaders, "mcpCorsHeaders");
 
 // src/billing.js
-var PRICE_YEN = 2980;
-var ANNUAL_YEN = 29800;
-var TRIAL_DAYS = 14;
 var TRIAL_SECONDS = TRIAL_DAYS * 24 * 60 * 60;
 var TRIAL_LIMIT = 60;
 var ACTIVE_MONTHLY_LIMIT = 1500;
@@ -150,20 +251,12 @@ function entitlementKey(email) {
 }
 __name(entitlementKey, "entitlementKey");
 function resolvePlan(record = {}, nowMs = Date.now()) {
-  const now = Math.floor(nowMs / 1e3);
-  const currentPeriodEnd = Number(record.currentPeriodEnd || 0);
-  if (record.plan === "active" && (!currentPeriodEnd || currentPeriodEnd > now)) {
-    return { plan: "active", trialDaysRemaining: 0, currentPeriodEnd };
-  }
-  if (Number(record.trialEndsAt || 0) > now) {
-    return {
-      plan: "trial",
-      trialDaysRemaining: Math.max(0, Math.ceil((record.trialEndsAt - now) / 86400)),
-      currentPeriodEnd
-    };
-  }
-  if (record.plan || record.trialEndsAt) return { plan: "expired", trialDaysRemaining: 0, currentPeriodEnd };
-  return { plan: "none", trialDaysRemaining: 0, currentPeriodEnd };
+  const merged = mergeEntitlement(record, nowMs);
+  return {
+    plan: merged.plan,
+    trialDaysRemaining: merged.trialDaysRemaining,
+    currentPeriodEnd: merged.currentPeriodEnd
+  };
 }
 __name(resolvePlan, "resolvePlan");
 async function readJson(env, key) {
@@ -257,15 +350,18 @@ async function consumeGeneration(env, input = {}, nowMs = Date.now()) {
   return { ok: true, billing: { ...billing, previewRemaining: PREVIEW_DAILY_LIMIT - used } };
 }
 __name(consumeGeneration, "consumeGeneration");
-async function createCheckoutSession(env, { email, origin, fetchImpl = fetch }) {
+async function createCheckoutSession(env, { email, origin, planId = "monthly", fetchImpl = fetch }) {
   const normalized = normalizeEmail(email);
+  const plan = planById(planId);
+  const priceId = env[plan.stripeEnv];
   if (!normalized) return { ok: false, status: 400, reason: "invalid_email" };
-  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_PRICE_ID) {
+  if (!env.STRIPE_SECRET_KEY || !priceId) {
     return { ok: false, status: 503, reason: "stripe_not_configured" };
   }
   const body = new URLSearchParams();
   body.set("mode", "subscription");
-  body.set("line_items[0][price]", env.STRIPE_PRICE_ID);
+  body.set("line_items[0][price]", priceId);
+  body.set("metadata[plan]", plan.id);
   body.set("line_items[0][quantity]", "1");
   body.set("customer_email", normalized);
   body.set("client_reference_id", normalized);
@@ -292,17 +388,53 @@ async function createCheckoutSession(env, { email, origin, fetchImpl = fetch }) 
   return { ok: true, url: payload.url };
 }
 __name(createCheckoutSession, "createCheckoutSession");
-async function activateEmail(env, email, { currentPeriodEnd, stripeCustomerId }, nowMs) {
+async function publishEntitlement(env, record) {
+  if (!env.BACKEND_URL || !env.INTERNAL_ENTITLEMENT_TOKEN || !record?.email) return { ok: false, skipped: true };
+  const fetchImpl = env.ENTITLEMENT_FETCH || fetch;
+  try {
+    const response = await fetchImpl(`${String(env.BACKEND_URL).replace(/\/$/, "")}/internal/entitlement`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.INTERNAL_ENTITLEMENT_TOKEN}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ email: record.email, entitlement: record })
+    });
+    return { ok: response.ok };
+  } catch {
+    return { ok: false, reason: "backend_unreachable" };
+  }
+}
+__name(publishEntitlement, "publishEntitlement");
+async function upsertEntitlementSource(env, email, sourceName, source, nowMs = Date.now()) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return { ok: false, reason: "invalid_email" };
+  if (!env.CHATGPT_KV) return { ok: false, reason: "storage_not_configured" };
+  const previous = await readJson(env, entitlementKey(normalized)) || { email: normalized };
+  const stored = await saveEntitlement(env, normalized, withSource(previous, sourceName, source), nowMs);
+  return { ok: true, email: normalized, record: stored };
+}
+__name(upsertEntitlementSource, "upsertEntitlementSource");
+async function saveEntitlement(env, email, record, nowMs) {
+  const stored = applyMergedPlan({ ...record, email }, nowMs);
+  await writeJson(env, entitlementKey(email), stored);
+  await publishEntitlement(env, stored);
+  return stored;
+}
+__name(saveEntitlement, "saveEntitlement");
+async function activateEmail(env, email, { currentPeriodEnd, stripeCustomerId, planId }, nowMs) {
   const previous = await readJson(env, entitlementKey(email)) || {};
-  await writeJson(env, entitlementKey(email), {
-    ...previous,
-    email,
-    plan: "active",
-    currentPeriodEnd,
-    stripeCustomerId: stripeCustomerId || previous.stripeCustomerId || "",
-    trialEndsAt: previous.trialEndsAt || 0,
-    updatedAt: Math.floor(nowMs / 1e3)
-  });
+  const next = withSource(
+    {
+      ...previous,
+      email,
+      stripeCustomerId: stripeCustomerId || previous.stripeCustomerId || "",
+      trialEndsAt: previous.trialEndsAt || 0
+    },
+    "stripe",
+    { active: true, currentPeriodEnd, customerId: stripeCustomerId || previous.stripeCustomerId || "", planId: planId || "monthly" }
+  );
+  await saveEntitlement(env, email, next, nowMs);
   if (stripeCustomerId) await env.CHATGPT_KV.put(`stripe-customer:${stripeCustomerId}`, email);
 }
 __name(activateEmail, "activateEmail");
@@ -316,7 +448,11 @@ async function applyStripeEvent(env, event, nowMs = Date.now()) {
     await activateEmail(
       env,
       email,
-      { currentPeriodEnd: Math.floor(nowMs / 1e3) + 32 * 86400, stripeCustomerId: session.customer || "" },
+      {
+        currentPeriodEnd: Math.floor(nowMs / 1e3) + 32 * 86400,
+        stripeCustomerId: session.customer || "",
+        planId: session.metadata?.plan || "monthly"
+      },
       nowMs
     );
     return { ok: true, email };
@@ -336,12 +472,12 @@ async function applyStripeEvent(env, event, nowMs = Date.now()) {
       );
     } else {
       const previous = await readJson(env, entitlementKey(email)) || { email };
-      await writeJson(env, entitlementKey(email), {
-        ...previous,
-        email,
-        plan: "expired",
-        currentPeriodEnd: Math.floor(nowMs / 1e3)
+      const next = withSource(previous, "stripe", {
+        active: false,
+        currentPeriodEnd: Math.floor(nowMs / 1e3),
+        customerId
       });
+      await saveEntitlement(env, email, next, nowMs);
     }
     return { ok: true, email };
   }
@@ -371,6 +507,455 @@ async function verifyStripeSignature(payload, header, secret, nowMs = Date.now()
   return signatures.some((signature) => timingSafeEqual(hex, signature));
 }
 __name(verifyStripeSignature, "verifyStripeSignature");
+
+// ../shared/account-token.js
+var NAMESPACE = "6ba7b8119dad11d180b400c04fd430c8";
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
+}
+__name(hexToBytes, "hexToBytes");
+async function accountTokenForEmail(email) {
+  const name = new TextEncoder().encode(String(email || "").trim().toLowerCase());
+  const ns = hexToBytes(NAMESPACE);
+  const data = new Uint8Array(ns.length + name.length);
+  data.set(ns, 0);
+  data.set(name, ns.length);
+  const digest2 = new Uint8Array(await crypto.subtle.digest("SHA-1", data)).slice(0, 16);
+  digest2[6] = digest2[6] & 15 | 80;
+  digest2[8] = digest2[8] & 63 | 128;
+  const hex = [...digest2].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+__name(accountTokenForEmail, "accountTokenForEmail");
+
+// ../shared/play-auth.js
+var TOKEN_URL = "https://oauth2.googleapis.com/token";
+var SCOPE = "https://www.googleapis.com/auth/androidpublisher";
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+__name(bytesToBase64Url, "bytesToBase64Url");
+function textToBase64Url(text) {
+  return bytesToBase64Url(new TextEncoder().encode(text));
+}
+__name(textToBase64Url, "textToBase64Url");
+function pemToDer(pem) {
+  const b64 = String(pem).replace(/-----BEGIN [^-]+-----/g, "").replace(/-----END [^-]+-----/g, "").replace(/\s+/g, "");
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+__name(pemToDer, "pemToDer");
+async function mintPlayAccessToken(saJson, { fetchImpl = fetch, nowMs = Date.now() } = {}) {
+  let sa = saJson;
+  if (typeof saJson === "string") {
+    try {
+      sa = JSON.parse(saJson);
+    } catch {
+      return "";
+    }
+  }
+  if (!sa?.client_email || !sa?.private_key) return "";
+  const header = textToBase64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const now = Math.floor(nowMs / 1e3);
+  const claims = textToBase64Url(
+    JSON.stringify({
+      iss: sa.client_email,
+      scope: SCOPE,
+      aud: TOKEN_URL,
+      iat: now,
+      exp: now + 3600
+    })
+  );
+  const signingInput = `${header}.${claims}`;
+  let key;
+  try {
+    key = await crypto.subtle.importKey(
+      "pkcs8",
+      pemToDer(sa.private_key),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  } catch {
+    return "";
+  }
+  const signature = new Uint8Array(
+    await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(signingInput))
+  );
+  const assertion = `${signingInput}.${bytesToBase64Url(signature)}`;
+  let response;
+  try {
+    response = await fetchImpl(TOKEN_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion
+      })
+    });
+  } catch {
+    return "";
+  }
+  if (!response?.ok) return "";
+  const payload = await response.json().catch(() => null);
+  return payload?.access_token || "";
+}
+__name(mintPlayAccessToken, "mintPlayAccessToken");
+async function playAccessTokenFromEnv(env) {
+  if (env.PLAY_ACCESS_TOKEN) return env.PLAY_ACCESS_TOKEN;
+  if (!env.GOOGLE_PLAY_SA_JSON) return "";
+  return mintPlayAccessToken(env.GOOGLE_PLAY_SA_JSON, {
+    fetchImpl: env.PLAY_TOKEN_FETCH || fetch
+  });
+}
+__name(playAccessTokenFromEnv, "playAccessTokenFromEnv");
+
+// ../shared/play-catalog.js
+function playSubscriptionV2Url(packageName, purchaseToken) {
+  const pkg = encodeURIComponent(packageName || PLAY_PACKAGE_NAME);
+  const token2 = encodeURIComponent(purchaseToken || "");
+  return `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${pkg}/purchases/subscriptionsv2/tokens/${token2}`;
+}
+__name(playSubscriptionV2Url, "playSubscriptionV2Url");
+var ACTIVE_STATES = /* @__PURE__ */ new Set([
+  "SUBSCRIPTION_STATE_ACTIVE",
+  "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+  "SUBSCRIPTION_STATE_CANCELED"
+]);
+function assessPlaySubscription(body = {}, nowMs = Date.now()) {
+  const line = (body.lineItems || [])[0] || {};
+  const expiryMs = Date.parse(line.expiryTime || "") || 0;
+  const active = ACTIVE_STATES.has(body.subscriptionState) && (!expiryMs || expiryMs > nowMs);
+  const basePlanId = line.offerDetails?.basePlanId || "";
+  const plan = PLANS.find((item) => item.playBasePlanId === basePlanId) || null;
+  return {
+    active,
+    currentPeriodEnd: expiryMs ? Math.floor(expiryMs / 1e3) : 0,
+    productId: line.productId || PLANS[0].playProductId,
+    planId: plan?.id || basePlanId,
+    accountToken: String(body.externalAccountIdentifiers?.obfuscatedExternalAccountId || ""),
+    purchaseToken: String(body.linkedPurchaseToken || body.purchaseToken || "")
+  };
+}
+__name(assessPlaySubscription, "assessPlaySubscription");
+
+// ../shared/store-jws.js
+var CURVES = [
+  { oid: [6, 8, 42, 134, 72, 206, 61, 3, 1, 7], crv: "P-256", size: 32 },
+  { oid: [6, 5, 43, 129, 4, 0, 34], crv: "P-384", size: 48 }
+];
+function bytesToB64Url(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+__name(bytesToB64Url, "bytesToB64Url");
+function b64UrlToBytes(value) {
+  const padded = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, "="));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+__name(b64UrlToBytes, "b64UrlToBytes");
+function b64DerToBytes(value) {
+  const binary = atob(String(value || "").replace(/\s+/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+__name(b64DerToBytes, "b64DerToBytes");
+async function sha256Hex(bytes) {
+  const digest2 = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest2)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+__name(sha256Hex, "sha256Hex");
+function curveKeyFromCert(der, wanted) {
+  const bytes = der instanceof Uint8Array ? der : new Uint8Array(der);
+  for (const curve of CURVES) {
+    if (wanted && curve.crv !== wanted) continue;
+    for (let i = 0; i < bytes.length - curve.oid.length - curve.size * 2; i += 1) {
+      let match = true;
+      for (let j = 0; j < curve.oid.length; j += 1) {
+        if (bytes[i + j] !== curve.oid[j]) match = false;
+      }
+      if (!match || bytes[i + curve.oid.length] !== 3) continue;
+      const length = bytes[i + curve.oid.length + 1];
+      const start = i + curve.oid.length + 2;
+      if (length !== curve.size * 2 + 2 || bytes[start] !== 0 || bytes[start + 1] !== 4) continue;
+      const point = start + 2;
+      return {
+        kty: "EC",
+        crv: curve.crv,
+        x: bytesToB64Url(bytes.slice(point, point + curve.size)),
+        y: bytesToB64Url(bytes.slice(point + curve.size, point + curve.size * 2))
+      };
+    }
+  }
+  return null;
+}
+__name(curveKeyFromCert, "curveKeyFromCert");
+function p256JwkFromCert(der) {
+  return curveKeyFromCert(der, "P-256");
+}
+__name(p256JwkFromCert, "p256JwkFromCert");
+async function importVerifyKey(publicJwk) {
+  return crypto.subtle.importKey(
+    "jwk",
+    { ...publicJwk, key_ops: ["verify"], ext: true },
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"]
+  );
+}
+__name(importVerifyKey, "importVerifyKey");
+async function verifyEs256Jws(jws, publicJwk) {
+  try {
+    const parts = String(jws || "").split(".");
+    if (parts.length !== 3 || !publicJwk || publicJwk.kty !== "EC" || publicJwk.crv !== "P-256") {
+      return { ok: false, reason: "bad_signature" };
+    }
+    const key = await importVerifyKey(publicJwk);
+    const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+    const signature = b64UrlToBytes(parts[2]);
+    const valid = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, signature, data);
+    if (!valid) return { ok: false, reason: "bad_signature" };
+    const payload = JSON.parse(new TextDecoder().decode(b64UrlToBytes(parts[1])));
+    return { ok: true, payload, header: JSON.parse(new TextDecoder().decode(b64UrlToBytes(parts[0]))) };
+  } catch {
+    return { ok: false, reason: "bad_signature" };
+  }
+}
+__name(verifyEs256Jws, "verifyEs256Jws");
+async function certSignedByIssuer(childDer, issuerDer) {
+  const { X509Certificate } = await import("node:crypto");
+  const child = new X509Certificate(childDer);
+  const issuer = new X509Certificate(issuerDer);
+  return child.verify(issuer.publicKey);
+}
+__name(certSignedByIssuer, "certSignedByIssuer");
+async function verifyAppleJws(jws, options = {}) {
+  if (options.publicJwk) return verifyEs256Jws(jws, options.publicJwk);
+  const parts = String(jws || "").split(".");
+  if (parts.length !== 3) return { ok: false, reason: "bad_signature" };
+  let header;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64UrlToBytes(parts[0])));
+  } catch {
+    return { ok: false, reason: "bad_signature" };
+  }
+  const chain = Array.isArray(header.x5c) ? header.x5c.map(b64DerToBytes) : [];
+  if (chain.length === 0) return { ok: false, reason: "bad_signature" };
+  const rootHash = await sha256Hex(chain[chain.length - 1]);
+  if (rootHash !== APPLE_ROOT_CA_G3_SHA256) return { ok: false, reason: "bad_signature" };
+  try {
+    for (let i = 0; i < chain.length - 1; i += 1) {
+      if (!await certSignedByIssuer(chain[i], chain[i + 1])) return { ok: false, reason: "bad_signature" };
+    }
+    if (chain.length === 1 && !await certSignedByIssuer(chain[0], chain[0])) {
+      return { ok: false, reason: "bad_signature" };
+    }
+  } catch {
+    return { ok: false, reason: "bad_signature" };
+  }
+  const leaf = p256JwkFromCert(chain[0]);
+  if (!leaf) return { ok: false, reason: "bad_signature" };
+  return verifyEs256Jws(jws, leaf);
+}
+__name(verifyAppleJws, "verifyAppleJws");
+function assessAppleTransaction(claims = {}, nowMs = Date.now()) {
+  const product = planByAppleProduct(claims.productId);
+  if (!product) return { ok: false, reason: "unknown_product" };
+  if (claims.bundleId && claims.bundleId !== APPLE_BUNDLE_ID) return { ok: false, reason: "bundle_mismatch" };
+  const expiresMs = Number(claims.expiresDate || 0);
+  const revoked = Boolean(claims.revocationDate);
+  const active = !revoked && (!expiresMs || expiresMs > nowMs);
+  return {
+    ok: true,
+    active,
+    currentPeriodEnd: expiresMs ? Math.floor(expiresMs / 1e3) : 0,
+    productId: claims.productId,
+    planId: product.id,
+    originalTransactionId: String(claims.originalTransactionId || ""),
+    accountToken: String(claims.appAccountToken || "")
+  };
+}
+__name(assessAppleTransaction, "assessAppleTransaction");
+function appleTrustFromEnv(env = {}) {
+  if (!env.APPLE_IAP_TRUST_JWK) return null;
+  try {
+    const parsed = JSON.parse(env.APPLE_IAP_TRUST_JWK);
+    return parsed && parsed.kty === "EC" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+__name(appleTrustFromEnv, "appleTrustFromEnv");
+
+// src/store-billing.js
+function storeWebhookAuthorized(request, env) {
+  if (!env.STORE_WEBHOOK_TOKEN) return false;
+  const url = new URL(request.url);
+  const token2 = url.searchParams.get("token") || request.headers.get("x-store-webhook-token") || "";
+  return timingSafeEqual(token2, env.STORE_WEBHOOK_TOKEN);
+}
+__name(storeWebhookAuthorized, "storeWebhookAuthorized");
+async function emailForAccountToken(env, token2) {
+  if (!token2 || !env.CHATGPT_KV) return "";
+  return normalizeEmail(await env.CHATGPT_KV.get(`store-account:${token2}`));
+}
+__name(emailForAccountToken, "emailForAccountToken");
+async function rememberStoreAccount(env, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized || !env.CHATGPT_KV) return { ok: false, reason: "invalid_email" };
+  const accountToken = await accountTokenForEmail(normalized);
+  await env.CHATGPT_KV.put(`store-account:${accountToken}`, normalized);
+  return { ok: true, email: normalized, accountToken };
+}
+__name(rememberStoreAccount, "rememberStoreAccount");
+async function grantStoreSource(env, email, sourceName, assessed, nowMs) {
+  return upsertEntitlementSource(
+    env,
+    email,
+    sourceName,
+    {
+      active: assessed.active,
+      currentPeriodEnd: assessed.currentPeriodEnd,
+      productId: assessed.productId,
+      planId: assessed.planId
+    },
+    nowMs
+  );
+}
+__name(grantStoreSource, "grantStoreSource");
+async function applyAppleNotification(env, body, nowMs = Date.now()) {
+  if (!env.CHATGPT_KV) return { ok: false, reason: "storage_not_configured" };
+  const trust = appleTrustFromEnv(env);
+  const outer = await verifyAppleJws(body?.signedPayload, trust ? { publicJwk: trust } : {});
+  if (!outer.ok) return outer;
+  const note = outer.payload || {};
+  const bundleId = note.data?.bundleId;
+  if (bundleId && bundleId !== "jp.besttrust.henshinhisho") return { ok: false, reason: "bundle_mismatch" };
+  const signedTransaction = note.data?.signedTransactionInfo;
+  if (!signedTransaction) return { ok: true, ignored: true };
+  const transaction = await verifyAppleJws(signedTransaction, trust ? { publicJwk: trust } : {});
+  if (!transaction.ok) return transaction;
+  const assessed = assessAppleTransaction(transaction.payload, nowMs);
+  if (!assessed.ok) return assessed;
+  const email = await emailForAccountToken(env, assessed.accountToken) || normalizeEmail(await env.CHATGPT_KV.get(`apple-original:${assessed.originalTransactionId}`));
+  if (!email) {
+    await env.CHATGPT_KV.put(`apple-pending:${assessed.originalTransactionId}`, JSON.stringify(assessed));
+    return { ok: true, pending: true };
+  }
+  if (assessed.originalTransactionId) {
+    await env.CHATGPT_KV.put(`apple-original:${assessed.originalTransactionId}`, email);
+  }
+  const saved = await grantStoreSource(env, email, "apple", assessed, nowMs);
+  return { ok: saved.ok, email, plan: saved.record?.plan || "" };
+}
+__name(applyAppleNotification, "applyAppleNotification");
+async function fetchPlaySubscription(env, purchaseToken) {
+  if (env.PLAY_FETCH) return env.PLAY_FETCH(purchaseToken);
+  const token2 = await playAccessTokenFromEnv(env);
+  if (!token2) return null;
+  const http = env.PLAY_HTTP_FETCH || fetch;
+  const response = await http(playSubscriptionV2Url(env.PLAY_PACKAGE_NAME || PLAY_PACKAGE_NAME, purchaseToken), {
+    headers: { authorization: `Bearer ${token2}` }
+  });
+  if (!response.ok) return null;
+  return response.json().catch(() => null);
+}
+__name(fetchPlaySubscription, "fetchPlaySubscription");
+async function applyGoogleNotification(env, body, nowMs = Date.now()) {
+  if (!env.CHATGPT_KV) return { ok: false, reason: "storage_not_configured" };
+  let decoded = body;
+  if (body?.message?.data) {
+    try {
+      decoded = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(body.message.data), (char) => char.charCodeAt(0))));
+    } catch {
+      return { ok: false, reason: "invalid_event" };
+    }
+  }
+  const note = decoded.subscriptionNotification || {};
+  const purchaseToken = note.purchaseToken || "";
+  if (!purchaseToken) return { ok: true, ignored: true };
+  const subscription = await fetchPlaySubscription(env, purchaseToken);
+  if (!subscription) return { ok: false, reason: "play_not_verified" };
+  const assessed = assessPlaySubscription({ ...subscription, purchaseToken }, nowMs);
+  const email = await emailForAccountToken(env, assessed.accountToken) || normalizeEmail(await env.CHATGPT_KV.get(`play-token:${purchaseToken}`));
+  if (!email) {
+    await env.CHATGPT_KV.put(`play-pending:${purchaseToken}`, JSON.stringify(assessed));
+    return { ok: true, pending: true };
+  }
+  await env.CHATGPT_KV.put(`play-token:${purchaseToken}`, email);
+  const saved = await grantStoreSource(env, email, "google", assessed, nowMs);
+  return { ok: saved.ok, email, plan: saved.record?.plan || "" };
+}
+__name(applyGoogleNotification, "applyGoogleNotification");
+async function handleStoreBillingRequest(request, env) {
+  const url = new URL(request.url);
+  if (url.pathname === "/billing/apple/notifications" && request.method === "POST") {
+    if (!storeWebhookAuthorized(request, env)) return json2({ ok: false, reason: "invalid_signature" }, 401);
+    const body = await request.json().catch(() => null);
+    const result = await applyAppleNotification(env, body);
+    return json2(result, result.ok ? 200 : 400);
+  }
+  if (url.pathname === "/billing/google/notifications" && request.method === "POST") {
+    if (!storeWebhookAuthorized(request, env)) return json2({ ok: false, reason: "invalid_signature" }, 401);
+    const body = await request.json().catch(() => null);
+    const result = await applyGoogleNotification(env, body);
+    return json2(result, result.ok ? 200 : 400);
+  }
+  if (url.pathname === "/internal/entitlement" && request.method === "GET") {
+    return readInternalEntitlement(request, env);
+  }
+  if (url.pathname === "/internal/entitlement" && request.method === "POST") {
+    return writeInternalEntitlement(request, env);
+  }
+  return null;
+}
+__name(handleStoreBillingRequest, "handleStoreBillingRequest");
+function bearerToken(request) {
+  const header = request.headers.get("authorization") || "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+}
+__name(bearerToken, "bearerToken");
+function internalAuthorized(request, env) {
+  return Boolean(env.INTERNAL_ENTITLEMENT_TOKEN) && timingSafeEqual(bearerToken(request), env.INTERNAL_ENTITLEMENT_TOKEN);
+}
+__name(internalAuthorized, "internalAuthorized");
+async function readInternalEntitlement(request, env) {
+  if (!internalAuthorized(request, env)) return json2({ ok: false, reason: "unauthorized" }, 401);
+  const email = normalizeEmail(new URL(request.url).searchParams.get("email"));
+  if (!email || !env.CHATGPT_KV) return json2({ ok: false, reason: "invalid_email" }, 400);
+  const raw = await env.CHATGPT_KV.get(`entitlement:${email}`);
+  return json2({ ok: true, email, entitlement: raw ? JSON.parse(raw) : null });
+}
+__name(readInternalEntitlement, "readInternalEntitlement");
+async function writeInternalEntitlement(request, env) {
+  if (!internalAuthorized(request, env)) return json2({ ok: false, reason: "unauthorized" }, 401);
+  const body = await request.json().catch(() => null);
+  const email = normalizeEmail(body?.email);
+  if (!email || !env.CHATGPT_KV || !body?.entitlement) return json2({ ok: false, reason: "invalid_email" }, 400);
+  const record = { ...body.entitlement, email };
+  await env.CHATGPT_KV.put(`entitlement:${email}`, JSON.stringify(record));
+  await rememberStoreAccount(env, email);
+  return json2({ ok: true, email, plan: record.plan || "" });
+}
+__name(writeInternalEntitlement, "writeInternalEntitlement");
+function json2(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+  });
+}
+__name(json2, "json");
 
 // src/mail/providers.js
 var GMAIL_SCOPES = Object.freeze([
@@ -531,8 +1116,8 @@ async function detectProvider(domain, fetchImpl = fetch) {
       headers: { accept: "application/dns-json" }
     });
     if (!response.ok) return "other";
-    const json3 = await response.json();
-    const data = (Array.isArray(json3.Answer) ? json3.Answer : []).map((answer) => String(answer.data || "").toLowerCase()).join(" ");
+    const json4 = await response.json();
+    const data = (Array.isArray(json4.Answer) ? json4.Answer : []).map((answer) => String(answer.data || "").toLowerCase()).join(" ");
     if (data.includes("aspmx.l.google.com")) return "workspace";
     if (data.includes("mail.protection.outlook.com")) return "microsoft";
     if (/mx\d*\.mail\.icloud\.com/.test(data)) return "icloud";
@@ -547,7 +1132,7 @@ __name(detectProvider, "detectProvider");
 // src/gmail.js
 var LINEBOT_GOOGLE_CLIENT_ID = "899798982543-2jk3d2fp97c02js71opg7l1j9fa7oh5a.apps.googleusercontent.com";
 var LINEBOT_GOOGLE_REDIRECT = "https://reply.kimitotalk.link/oauth/google/callback";
-var TOKEN_URL = "https://oauth2.googleapis.com/token";
+var TOKEN_URL2 = "https://oauth2.googleapis.com/token";
 var AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 var SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 var USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
@@ -635,7 +1220,7 @@ ${body || ""}`;
 __name(buildRawMessage, "buildRawMessage");
 async function refreshAccessToken(env, refreshToken, fetchImpl) {
   if (!env.GOOGLE_CLIENT_SECRET) return { ok: false, reason: "gmail_not_configured" };
-  const response = await fetchImpl(TOKEN_URL, {
+  const response = await fetchImpl(TOKEN_URL2, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -645,9 +1230,9 @@ async function refreshAccessToken(env, refreshToken, fetchImpl) {
       grant_type: "refresh_token"
     })
   });
-  const json3 = await response.json().catch(() => ({}));
-  if (!response.ok || !json3.access_token) return { ok: false, reason: "gmail_refresh_failed" };
-  return { ok: true, accessToken: json3.access_token };
+  const json4 = await response.json().catch(() => ({}));
+  if (!response.ok || !json4.access_token) return { ok: false, reason: "gmail_refresh_failed" };
+  return { ok: true, accessToken: json4.access_token };
 }
 __name(refreshAccessToken, "refreshAccessToken");
 async function sendViaGmail(env, account, message, fetchImpl = fetch) {
@@ -669,13 +1254,13 @@ async function sendViaGmail(env, account, message, fetchImpl = fetch) {
     body: JSON.stringify({ raw })
   });
   if (!response.ok) return { ok: false, reason: "gmail_send_failed", sent: false };
-  const json3 = await response.json().catch(() => ({}));
-  return { ok: true, sent: true, provider: "gmail", messageId: message.messageId || json3.id || "", gmailId: json3.id || "" };
+  const json4 = await response.json().catch(() => ({}));
+  return { ok: true, sent: true, provider: "gmail", messageId: message.messageId || json4.id || "", gmailId: json4.id || "" };
 }
 __name(sendViaGmail, "sendViaGmail");
 async function exchangeGoogleCode(env, code, fetchImpl = fetch) {
   if (!env.GOOGLE_CLIENT_SECRET || !env.CHATGPT_KV) return { ok: false, reason: "gmail_not_configured" };
-  const response = await fetchImpl(TOKEN_URL, {
+  const response = await fetchImpl(TOKEN_URL2, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -686,9 +1271,9 @@ async function exchangeGoogleCode(env, code, fetchImpl = fetch) {
       redirect_uri: googleRedirectUri(env)
     })
   });
-  const json3 = await response.json().catch(() => ({}));
-  if (!response.ok || !json3.refresh_token) return { ok: false, reason: "gmail_code_rejected" };
-  const profile = await fetchImpl(USERINFO_URL, { headers: { authorization: `Bearer ${json3.access_token}` } });
+  const json4 = await response.json().catch(() => ({}));
+  if (!response.ok || !json4.refresh_token) return { ok: false, reason: "gmail_code_rejected" };
+  const profile = await fetchImpl(USERINFO_URL, { headers: { authorization: `Bearer ${json4.access_token}` } });
   const user = await profile.json().catch(() => ({}));
   const email = String(user.email || "").toLowerCase();
   if (!profile.ok || !email) return { ok: false, reason: "gmail_profile_failed" };
@@ -698,7 +1283,7 @@ async function exchangeGoogleCode(env, code, fetchImpl = fetch) {
   let provider = providerOf(email);
   if (provider === "other") provider = await detectProvider(domainOf(email), fetchImpl);
   if (provider !== "gmail" && provider !== "workspace") provider = "workspace";
-  await saveGmailAccount(env, { email, refreshToken: json3.refresh_token, provider });
+  await saveGmailAccount(env, { email, refreshToken: json4.refresh_token, provider });
   return { ok: true, email };
 }
 __name(exchangeGoogleCode, "exchangeGoogleCode");
@@ -6423,18 +7008,18 @@ function parseHex(hex) {
   return bytes;
 }
 __name(parseHex, "parseHex");
-function hexToBytes(hex) {
+function hexToBytes2(hex) {
   const bytes = parseHex(hex);
   if (!bytes || bytes.length !== 32) return null;
   return bytes;
 }
-__name(hexToBytes, "hexToBytes");
+__name(hexToBytes2, "hexToBytes");
 function bytesToHex(bytes) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 __name(bytesToHex, "bytesToHex");
 async function importKey(keyHex) {
-  const raw = hexToBytes(keyHex);
+  const raw = hexToBytes2(keyHex);
   if (!raw) return null;
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
@@ -6465,7 +7050,7 @@ __name(decryptSecret, "decryptSecret");
 
 // src/mail/microsoft.js
 var AUTH_URL2 = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
-var TOKEN_URL2 = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
+var TOKEN_URL3 = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 var MS_SCOPES = "offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send";
 function msOauthEnabled(env) {
   return env.MS_OAUTH_ENABLED === "1" && Boolean(env.MS_CLIENT_ID) && Boolean(env.MS_CLIENT_SECRET);
@@ -6491,14 +7076,14 @@ function buildMicrosoftAuthUrl(env, state, loginHint) {
 }
 __name(buildMicrosoftAuthUrl, "buildMicrosoftAuthUrl");
 async function tokenRequest(env, body, fetchImpl) {
-  const response = await fetchImpl(TOKEN_URL2, {
+  const response = await fetchImpl(TOKEN_URL3, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(body)
   });
-  const json3 = await response.json().catch(() => ({}));
-  if (!response.ok || !json3.access_token) return { ok: false, reason: "ms_token_failed" };
-  return { ok: true, json: json3 };
+  const json4 = await response.json().catch(() => ({}));
+  if (!response.ok || !json4.access_token) return { ok: false, reason: "ms_token_failed" };
+  return { ok: true, json: json4 };
 }
 __name(tokenRequest, "tokenRequest");
 function emailFromIdToken(idToken) {
@@ -6506,8 +7091,8 @@ function emailFromIdToken(idToken) {
   if (parts.length < 2) return "";
   try {
     const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json3 = JSON.parse(atob(padded));
-    return String(json3.email || json3.preferred_username || "").toLowerCase();
+    const json4 = JSON.parse(atob(padded));
+    return String(json4.email || json4.preferred_username || "").toLowerCase();
   } catch {
     return "";
   }
@@ -7461,12 +8046,12 @@ function reviewConfirmation(input = {}) {
 __name(reviewConfirmation, "reviewConfirmation");
 
 // src/drafts.js
-function withSource(candidates, source) {
+function withSource2(candidates, source) {
   return candidates.map((candidate) => ({ ...candidate, source }));
 }
-__name(withSource, "withSource");
+__name(withSource2, "withSource");
 async function generateCandidates(env, assessment, fetchImpl = fetch) {
-  const templates = withSource(buildCandidates(assessment), "template");
+  const templates = withSource2(buildCandidates(assessment), "template");
   if (!env.BACKEND_URL || !env.INTERNAL_DRAFT_TOKEN || !env.DRAFT_SERVICE_USER_ID) {
     return { candidates: templates, draftSource: "template", draftReason: "llm_not_configured" };
   }
@@ -7519,16 +8104,57 @@ async function generateCandidates(env, assessment, fetchImpl = fetch) {
 }
 __name(generateCandidates, "generateCandidates");
 
-// src/shiori.js
-function ownerKey(input = {}) {
-  const email = normalizeEmail(input.email);
-  if (email) return `email:${email}`;
-  const deskId = validDeskId(input.deskId);
-  if (deskId) return `desk:${deskId}`;
-  return "";
+// src/mcp-oauth.js
+var SCOPE2 = "replies";
+var CODE_TTL = 300;
+var ACCESS_TTL = 3600;
+function json3(body, status = 200, extra = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extra }
+  });
 }
-__name(ownerKey, "ownerKey");
+__name(json3, "json");
+function base64Url2(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+__name(base64Url2, "base64Url");
+async function sha256(value) {
+  const digest2 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return base64Url2(new Uint8Array(digest2));
+}
+__name(sha256, "sha256");
+function protectedResourceMetadata(origin) {
+  return {
+    resource: `${origin}/mcp`,
+    authorization_servers: [origin],
+    scopes_supported: [SCOPE2],
+    bearer_methods_supported: ["header"]
+  };
+}
+__name(protectedResourceMetadata, "protectedResourceMetadata");
+function authorizationServerMetadata(origin) {
+  return {
+    issuer: origin,
+    authorization_endpoint: `${origin}/oauth/authorize`,
+    token_endpoint: `${origin}/oauth/token`,
+    registration_endpoint: `${origin}/oauth/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+    scopes_supported: [SCOPE2]
+  };
+}
+__name(authorizationServerMetadata, "authorizationServerMetadata");
+function wwwAuthenticate(origin) {
+  return `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="${SCOPE2}"`;
+}
+__name(wwwAuthenticate, "wwwAuthenticate");
 async function readJson2(env, key) {
+  if (!env.CHATGPT_KV) return null;
   const raw = await env.CHATGPT_KV.get(key);
   if (!raw) return null;
   try {
@@ -7538,14 +8164,170 @@ async function readJson2(env, key) {
   }
 }
 __name(readJson2, "readJson");
+async function accessTokenRecord(env, token2) {
+  if (!token2) return null;
+  return readJson2(env, `oauth-access:${token2}`);
+}
+__name(accessTokenRecord, "accessTokenRecord");
+function escapeHtml3(value) {
+  return String(value || "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
+}
+__name(escapeHtml3, "escapeHtml");
+function formPage(params, error = "") {
+  const hidden = ["client_id", "redirect_uri", "state", "code_challenge", "code_challenge_method"].map((name) => `<input type="hidden" name="${name}" value="${escapeHtml3(params.get(name) || "")}">`).join("");
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>\u63A5\u7D9A\u306E\u8A31\u53EF</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font-family:system-ui,sans-serif;margin:24px;line-height:1.5}button{font-size:16px;padding:10px 14px}</style>
+</head><body><h1>\u8FD4\u4FE1\u79D8\u66F8\u3078\u306E\u63A5\u7D9A</h1><p>\u3053\u306E\u753B\u9762\u3092\u8A31\u53EF\u3059\u308B\u3068\u3001\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8\u306F\u4F5C\u6210\u30AB\u30FC\u30C9\u3092\u547C\u3079\u307E\u3059\u3002\u30E1\u30FC\u30EB\u306E\u9001\u4FE1\u306F\u3001\u30AB\u30FC\u30C9\u306E\u300C\u9001\u4FE1\u300D\u3092\u62BC\u3057\u305F\u3068\u304D\u3060\u3051\u3067\u3059\u3002</p>
+${error ? `<p>${escapeHtml3(error)}</p>` : ""}
+<form method="post">${hidden}<label>\u30A2\u30AB\u30A6\u30F3\u30C8\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9<input name="email" type="email" autocomplete="email"></label><label>\u63A5\u7D9A\u30AD\u30FC<input name="key" type="password" required></label><button type="submit">\u8A31\u53EF\u3059\u308B</button></form></body></html>`;
+}
+__name(formPage, "formPage");
+function redirectAllowed(uri) {
+  try {
+    const url = new URL(uri);
+    if (url.protocol === "https:") return true;
+    return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+  } catch {
+    return false;
+  }
+}
+__name(redirectAllowed, "redirectAllowed");
+async function register(request, env) {
+  if (!env.CHATGPT_KV) return json3({ error: "storage_not_configured" }, 503);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json3({ error: "invalid_json" }, 400);
+  }
+  const redirects = Array.isArray(body?.redirect_uris) ? body.redirect_uris.filter(redirectAllowed) : [];
+  if (redirects.length === 0) return json3({ error: "invalid_redirect_uri" }, 400);
+  const clientId = crypto.randomUUID();
+  await env.CHATGPT_KV.put(
+    `oauth-client:${clientId}`,
+    JSON.stringify({ clientId, redirectUris: redirects, name: String(body.client_name || "").slice(0, 80) })
+  );
+  return json3({ client_id: clientId, redirect_uris: redirects, token_endpoint_auth_method: "none" }, 201);
+}
+__name(register, "register");
+async function authorize(request, env) {
+  const url = new URL(request.url);
+  if (!env.CHATGPT_KV || !env.MCP_OAUTH_CONSENT_KEY) {
+    return new Response("OAuth\u306E\u540C\u610F\u30AD\u30FC\u304C\u672A\u8A2D\u5B9A\u3067\u3059\u3002", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
+  const params = request.method === "POST" ? new URLSearchParams(await request.text()) : url.searchParams;
+  const clientId = params.get("client_id") || url.searchParams.get("client_id") || "";
+  const redirectUri = params.get("redirect_uri") || url.searchParams.get("redirect_uri") || "";
+  const state = params.get("state") || url.searchParams.get("state") || "";
+  const challenge = params.get("code_challenge") || url.searchParams.get("code_challenge") || "";
+  const method = params.get("code_challenge_method") || url.searchParams.get("code_challenge_method") || "";
+  const client = await readJson2(env, `oauth-client:${clientId}`);
+  if (!client || !client.redirectUris?.includes(redirectUri) || method !== "S256" || !challenge) {
+    return json3({ error: "invalid_client" }, 400);
+  }
+  if (request.method === "GET") {
+    return new Response(formPage(url.searchParams), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+  }
+  if (!timingSafeEqual(params.get("key") || "", env.MCP_OAUTH_CONSENT_KEY)) {
+    return new Response(formPage(params, "\u63A5\u7D9A\u30AD\u30FC\u304C\u9055\u3044\u307E\u3059\u3002"), {
+      status: 401,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }
+    });
+  }
+  const accountEmail = normalizeEmail(params.get("email") || "");
+  if (params.get("email") && !accountEmail) {
+    return new Response(formPage(params, "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306E\u5F62\u5F0F\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002"), {
+      status: 400,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }
+    });
+  }
+  const code = crypto.randomUUID();
+  await env.CHATGPT_KV.put(
+    `oauth-code:${code}`,
+    JSON.stringify({ clientId, redirectUri, challenge, state, accountEmail }),
+    { expirationTtl: CODE_TTL }
+  );
+  const back = new URL(redirectUri);
+  back.searchParams.set("code", code);
+  if (state) back.searchParams.set("state", state);
+  return Response.redirect(back.toString(), 302);
+}
+__name(authorize, "authorize");
+async function token(request, env) {
+  if (!env.CHATGPT_KV) return json3({ error: "storage_not_configured" }, 503);
+  const body = new URLSearchParams(await request.text());
+  const grant = body.get("grant_type");
+  if (grant === "refresh_token") {
+    const record2 = await readJson2(env, `oauth-refresh:${body.get("refresh_token") || ""}`);
+    if (!record2) return json3({ error: "invalid_grant" }, 400);
+    return issue(env, record2.clientId, record2.accountEmail || "");
+  }
+  if (grant !== "authorization_code") return json3({ error: "unsupported_grant_type" }, 400);
+  const code = body.get("code") || "";
+  const record = await readJson2(env, `oauth-code:${code}`);
+  await env.CHATGPT_KV.delete(`oauth-code:${code}`);
+  if (!record || record.clientId !== body.get("client_id") || record.redirectUri !== body.get("redirect_uri")) {
+    return json3({ error: "invalid_grant" }, 400);
+  }
+  const hashed = await sha256(body.get("code_verifier") || "");
+  if (!timingSafeEqual(hashed, record.challenge)) return json3({ error: "invalid_grant" }, 400);
+  return issue(env, record.clientId, record.accountEmail || "");
+}
+__name(token, "token");
+async function issue(env, clientId, accountEmail = "") {
+  const access = crypto.randomUUID();
+  const refresh = crypto.randomUUID();
+  const identity = accountEmail ? { accountEmail } : {};
+  await env.CHATGPT_KV.put(
+    `oauth-access:${access}`,
+    JSON.stringify({ clientId, scope: SCOPE2, ...identity }),
+    { expirationTtl: ACCESS_TTL }
+  );
+  await env.CHATGPT_KV.put(`oauth-refresh:${refresh}`, JSON.stringify({ clientId, ...identity }));
+  return json3({ access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL, refresh_token: refresh, scope: SCOPE2 });
+}
+__name(issue, "issue");
+async function handleOAuthRoute(request, env, origin) {
+  const url = new URL(request.url);
+  if (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+    return json3(protectedResourceMetadata(origin));
+  }
+  if (url.pathname === "/.well-known/oauth-authorization-server") return json3(authorizationServerMetadata(origin));
+  if (url.pathname === "/oauth/register" && request.method === "POST") return register(request, env);
+  if (url.pathname === "/oauth/authorize" && (request.method === "GET" || request.method === "POST")) return authorize(request, env);
+  if (url.pathname === "/oauth/token" && request.method === "POST") return token(request, env);
+  return null;
+}
+__name(handleOAuthRoute, "handleOAuthRoute");
+
+// src/shiori.js
+function ownerKey(input = {}) {
+  const email = normalizeEmail(input.email);
+  if (email) return `email:${email}`;
+  const deskId = validDeskId(input.deskId);
+  if (deskId) return `desk:${deskId}`;
+  return "";
+}
+__name(ownerKey, "ownerKey");
+async function readJson3(env, key) {
+  const raw = await env.CHATGPT_KV.get(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+__name(readJson3, "readJson");
 async function listShiori(env, input = {}) {
   if (!env.CHATGPT_KV) return { ok: false, reason: "storage_not_configured", items: [] };
   const owner = ownerKey(input);
   if (!owner) return { ok: false, reason: "owner_required", items: [] };
-  const ids = await readJson2(env, `shiori-index:${owner}`) || [];
+  const ids = await readJson3(env, `shiori-index:${owner}`) || [];
   const items = [];
   for (const id of ids) {
-    const record = await readJson2(env, `shiori:${owner}:${id}`);
+    const record = await readJson3(env, `shiori:${owner}:${id}`);
     if (record) items.push(record);
   }
   return { ok: true, items };
@@ -7570,7 +8352,7 @@ async function saveShiori(env, input = {}, nowMs = Date.now()) {
   };
   await env.CHATGPT_KV.put(`shiori:${owner}:${id}`, JSON.stringify(record));
   const indexKey = `shiori-index:${owner}`;
-  const previous = await readJson2(env, indexKey) || [];
+  const previous = await readJson3(env, indexKey) || [];
   const next = [id, ...previous.filter((item) => item !== id)].slice(0, 20);
   const dropped = previous.filter((item) => !next.includes(item));
   await env.CHATGPT_KV.put(indexKey, JSON.stringify(next));
@@ -8326,8 +9108,9 @@ async function loadSnapshot(env, id) {
   }
 }
 __name(loadSnapshot, "loadSnapshot");
-async function callTool(env, name, args, origin) {
-  const input = args && typeof args === "object" ? args : {};
+async function callTool(env, name, args, origin, accountEmail = "") {
+  const input = { ...args && typeof args === "object" ? args : {} };
+  if (accountEmail) input.email = accountEmail;
   if (name === "open_reply_desk") {
     const payload = await present(env, input, origin, { candidates: [] });
     return toolResult(payload);
@@ -8562,7 +9345,11 @@ async function handleMcpRequest(request, env) {
   }
   if (method === "tools/call") {
     try {
-      const result = await callTool(env, params?.name, params?.arguments, origin);
+      const header = request.headers.get("authorization") || "";
+      const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+      const access = await accessTokenRecord(env, bearer);
+      const accountEmail = normalizeEmail(access?.accountEmail || "");
+      const result = await callTool(env, params?.name, params?.arguments, origin, accountEmail);
       console.log(JSON.stringify({ event: "mcp_tool", tool: params?.name || "", ok: result?.structuredContent?.ok !== false }));
       return respond(request, rpcResult(id, result));
     } catch (error) {
@@ -8573,191 +9360,6 @@ async function handleMcpRequest(request, env) {
   return respond(request, rpcError(id, -32601, `method not found: ${method}`));
 }
 __name(handleMcpRequest, "handleMcpRequest");
-
-// src/mcp-oauth.js
-var SCOPE = "replies";
-var CODE_TTL = 300;
-var ACCESS_TTL = 3600;
-function json2(body, status = 200, extra = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extra }
-  });
-}
-__name(json2, "json");
-function base64Url2(bytes) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-__name(base64Url2, "base64Url");
-async function sha256(value) {
-  const digest2 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return base64Url2(new Uint8Array(digest2));
-}
-__name(sha256, "sha256");
-function protectedResourceMetadata(origin) {
-  return {
-    resource: `${origin}/mcp`,
-    authorization_servers: [origin],
-    scopes_supported: [SCOPE],
-    bearer_methods_supported: ["header"]
-  };
-}
-__name(protectedResourceMetadata, "protectedResourceMetadata");
-function authorizationServerMetadata(origin) {
-  return {
-    issuer: origin,
-    authorization_endpoint: `${origin}/oauth/authorize`,
-    token_endpoint: `${origin}/oauth/token`,
-    registration_endpoint: `${origin}/oauth/register`,
-    response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
-    scopes_supported: [SCOPE]
-  };
-}
-__name(authorizationServerMetadata, "authorizationServerMetadata");
-function wwwAuthenticate(origin) {
-  return `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="${SCOPE}"`;
-}
-__name(wwwAuthenticate, "wwwAuthenticate");
-async function readJson3(env, key) {
-  if (!env.CHATGPT_KV) return null;
-  const raw = await env.CHATGPT_KV.get(key);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-__name(readJson3, "readJson");
-async function accessTokenRecord(env, token2) {
-  if (!token2) return null;
-  return readJson3(env, `oauth-access:${token2}`);
-}
-__name(accessTokenRecord, "accessTokenRecord");
-function escapeHtml3(value) {
-  return String(value || "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
-}
-__name(escapeHtml3, "escapeHtml");
-function formPage(params, error = "") {
-  const hidden = ["client_id", "redirect_uri", "state", "code_challenge", "code_challenge_method"].map((name) => `<input type="hidden" name="${name}" value="${escapeHtml3(params.get(name) || "")}">`).join("");
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>\u63A5\u7D9A\u306E\u8A31\u53EF</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>body{font-family:system-ui,sans-serif;margin:24px;line-height:1.5}button{font-size:16px;padding:10px 14px}</style>
-</head><body><h1>\u8FD4\u4FE1\u79D8\u66F8\u3078\u306E\u63A5\u7D9A</h1><p>\u3053\u306E\u753B\u9762\u3092\u8A31\u53EF\u3059\u308B\u3068\u3001\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8\u306F\u4F5C\u6210\u30AB\u30FC\u30C9\u3092\u547C\u3079\u307E\u3059\u3002\u30E1\u30FC\u30EB\u306E\u9001\u4FE1\u306F\u3001\u30AB\u30FC\u30C9\u306E\u300C\u9001\u4FE1\u300D\u3092\u62BC\u3057\u305F\u3068\u304D\u3060\u3051\u3067\u3059\u3002</p>
-${error ? `<p>${escapeHtml3(error)}</p>` : ""}
-<form method="post">${hidden}<label>\u63A5\u7D9A\u30AD\u30FC<input name="key" type="password" required></label><button type="submit">\u8A31\u53EF\u3059\u308B</button></form></body></html>`;
-}
-__name(formPage, "formPage");
-function redirectAllowed(uri) {
-  try {
-    const url = new URL(uri);
-    if (url.protocol === "https:") return true;
-    return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
-  } catch {
-    return false;
-  }
-}
-__name(redirectAllowed, "redirectAllowed");
-async function register(request, env) {
-  if (!env.CHATGPT_KV) return json2({ error: "storage_not_configured" }, 503);
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json2({ error: "invalid_json" }, 400);
-  }
-  const redirects = Array.isArray(body?.redirect_uris) ? body.redirect_uris.filter(redirectAllowed) : [];
-  if (redirects.length === 0) return json2({ error: "invalid_redirect_uri" }, 400);
-  const clientId = crypto.randomUUID();
-  await env.CHATGPT_KV.put(
-    `oauth-client:${clientId}`,
-    JSON.stringify({ clientId, redirectUris: redirects, name: String(body.client_name || "").slice(0, 80) })
-  );
-  return json2({ client_id: clientId, redirect_uris: redirects, token_endpoint_auth_method: "none" }, 201);
-}
-__name(register, "register");
-async function authorize(request, env) {
-  const url = new URL(request.url);
-  if (!env.CHATGPT_KV || !env.MCP_OAUTH_CONSENT_KEY) {
-    return new Response("OAuth\u306E\u540C\u610F\u30AD\u30FC\u304C\u672A\u8A2D\u5B9A\u3067\u3059\u3002", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
-  }
-  const params = request.method === "POST" ? new URLSearchParams(await request.text()) : url.searchParams;
-  const clientId = params.get("client_id") || url.searchParams.get("client_id") || "";
-  const redirectUri = params.get("redirect_uri") || url.searchParams.get("redirect_uri") || "";
-  const state = params.get("state") || url.searchParams.get("state") || "";
-  const challenge = params.get("code_challenge") || url.searchParams.get("code_challenge") || "";
-  const method = params.get("code_challenge_method") || url.searchParams.get("code_challenge_method") || "";
-  const client = await readJson3(env, `oauth-client:${clientId}`);
-  if (!client || !client.redirectUris?.includes(redirectUri) || method !== "S256" || !challenge) {
-    return json2({ error: "invalid_client" }, 400);
-  }
-  if (request.method === "GET") {
-    return new Response(formPage(url.searchParams), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
-  }
-  if (!timingSafeEqual(params.get("key") || "", env.MCP_OAUTH_CONSENT_KEY)) {
-    return new Response(formPage(params, "\u63A5\u7D9A\u30AD\u30FC\u304C\u9055\u3044\u307E\u3059\u3002"), {
-      status: 401,
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }
-    });
-  }
-  const code = crypto.randomUUID();
-  await env.CHATGPT_KV.put(
-    `oauth-code:${code}`,
-    JSON.stringify({ clientId, redirectUri, challenge, state }),
-    { expirationTtl: CODE_TTL }
-  );
-  const back = new URL(redirectUri);
-  back.searchParams.set("code", code);
-  if (state) back.searchParams.set("state", state);
-  return Response.redirect(back.toString(), 302);
-}
-__name(authorize, "authorize");
-async function token(request, env) {
-  if (!env.CHATGPT_KV) return json2({ error: "storage_not_configured" }, 503);
-  const body = new URLSearchParams(await request.text());
-  const grant = body.get("grant_type");
-  if (grant === "refresh_token") {
-    const record2 = await readJson3(env, `oauth-refresh:${body.get("refresh_token") || ""}`);
-    if (!record2) return json2({ error: "invalid_grant" }, 400);
-    return issue(env, record2.clientId);
-  }
-  if (grant !== "authorization_code") return json2({ error: "unsupported_grant_type" }, 400);
-  const code = body.get("code") || "";
-  const record = await readJson3(env, `oauth-code:${code}`);
-  await env.CHATGPT_KV.delete(`oauth-code:${code}`);
-  if (!record || record.clientId !== body.get("client_id") || record.redirectUri !== body.get("redirect_uri")) {
-    return json2({ error: "invalid_grant" }, 400);
-  }
-  const hashed = await sha256(body.get("code_verifier") || "");
-  if (!timingSafeEqual(hashed, record.challenge)) return json2({ error: "invalid_grant" }, 400);
-  return issue(env, record.clientId);
-}
-__name(token, "token");
-async function issue(env, clientId) {
-  const access = crypto.randomUUID();
-  const refresh = crypto.randomUUID();
-  await env.CHATGPT_KV.put(`oauth-access:${access}`, JSON.stringify({ clientId, scope: SCOPE }), { expirationTtl: ACCESS_TTL });
-  await env.CHATGPT_KV.put(`oauth-refresh:${refresh}`, JSON.stringify({ clientId }));
-  return json2({ access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL, refresh_token: refresh, scope: SCOPE });
-}
-__name(issue, "issue");
-async function handleOAuthRoute(request, env, origin) {
-  const url = new URL(request.url);
-  if (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp") {
-    return json2(protectedResourceMetadata(origin));
-  }
-  if (url.pathname === "/.well-known/oauth-authorization-server") return json2(authorizationServerMetadata(origin));
-  if (url.pathname === "/oauth/register" && request.method === "POST") return register(request, env);
-  if (url.pathname === "/oauth/authorize" && (request.method === "GET" || request.method === "POST")) return authorize(request, env);
-  if (url.pathname === "/oauth/token" && request.method === "POST") return token(request, env);
-  return null;
-}
-__name(handleOAuthRoute, "handleOAuthRoute");
 
 // src/pages.js
 var NOTICES = {
@@ -8816,12 +9418,12 @@ function pricePage(noticeKey = "") {
 <main>
   <p>AI\u8FD4\u4FE1\u79D8\u66F8</p>
   <h1>\u6599\u91D1</h1>
-  <p>ChatGPT\u3001Claude\u3001Grok \u306E\u4F1A\u8A71\u306B\u3001\u30E1\u30FC\u30EB\u306E\u4F5C\u6210\u30AB\u30FC\u30C9\u3092\u51FA\u3057\u307E\u3059\u3002\u9001\u4FE1\u306F\u30AB\u30FC\u30C9\u306E\u300C\u9001\u4FE1\u300D\u3092\u62BC\u3057\u305F\u3068\u304D\u3060\u3051\u3067\u3059\u3002</p>
+  <p>\u4E00\u3064\u306E\u5951\u7D04\u3067\u3001ChatGPT\u3001Claude\u3001Grok \u306E\u4F5C\u6210\u30AB\u30FC\u30C9\u3068\u3001Web\u3001iPhone\u3001Android \u304C\u4F7F\u3048\u307E\u3059\u3002\u9001\u4FE1\u306F\u3001\u30AB\u30FC\u30C9\u306E\u300C\u9001\u4FE1\u300D\u3092\u62BC\u3057\u305F\u3068\u304D\u3060\u3051\u3067\u3059\u3002</p>
   ${notice ? `<p class="notice" role="status">${escapeHtml4(notice)}</p>` : ""}
   <section class="card" aria-labelledby="planTitle">
     <h2 id="planTitle">\u30B9\u30BF\u30F3\u30C0\u30FC\u30C9</h2>
     <p class="price">${PRICE_YEN.toLocaleString("ja-JP")}<span>\u5186 / \u6708</span></p>
-    <p>\u5E74\u984D\u3067\u307E\u3068\u3081\u308B\u5834\u5408\u306F ${ANNUAL_YEN.toLocaleString("ja-JP")}\u5186\u3067\u3059\u3002\u304A\u8A66\u3057\u306F${TRIAL_DAYS}\u65E5\u9593\u3067\u3001\u671F\u9593\u4E2D\u306F\u3044\u3064\u3067\u3082\u6B62\u3081\u3089\u308C\u307E\u3059\u3002</p>
+    <p>\u5E74\u984D\u306F ${ANNUAL_YEN.toLocaleString("ja-JP")}\u5186\u3067\u3059\u3002\u304A\u8A66\u3057\u306F${TRIAL_DAYS}\u65E5\u9593\u3067\u3059\u3002\u671F\u9593\u306E\u3042\u3068\u306F\u3001\u7D9A\u3051\u308B\u304B\u3069\u3046\u304B\u3092\u9078\u3079\u307E\u3059\u3002</p>
     <ul>
       <li>\u8FD4\u4FE1\u5019\u88DC\u3092\u30C8\u30FC\u30F3\u5225\u306B\u898B\u6BD4\u3079\u308B</li>
       <li>\u5371\u967A\u5EA6\u3068\u7406\u7531\u3092\u3001\u30B3\u30D4\u30FC\u3059\u308B\u524D\u306B\u8868\u793A\u3059\u308B</li>
@@ -8839,13 +9441,23 @@ function pricePage(noticeKey = "") {
     </form>
   </section>
   <section class="card" aria-labelledby="payTitle">
-    <h2 id="payTitle">\u6708\u984D\u30D7\u30E9\u30F3\u306E\u652F\u6255\u3044</h2>
+    <h2 id="payTitle">\u6708\u984D\u3068\u5E74\u984D</h2>
+    <p>Web \u3068\u4F5C\u6210\u30AB\u30FC\u30C9\u306E\u652F\u6255\u3044\u306F\u3001\u3053\u3053\u3067\u540C\u3058\u6599\u91D1\u3092\u4F7F\u3044\u307E\u3059\u3002iPhone \u3068 Android \u306F\u3001\u305D\u308C\u305E\u308C\u306E\u30B9\u30C8\u30A2\u306E\u5B9A\u671F\u8CFC\u5165\u3067\u3059\u3002\u3069\u306E\u753B\u9762\u3067\u7533\u3057\u8FBC\u3093\u3067\u3082\u3001\u540C\u3058\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306E\u5951\u7D04\u304C\u958B\u304D\u307E\u3059\u3002</p>
     <form method="post" action="/billing/checkout">
+      <input type="hidden" name="plan" value="monthly" />
       <label>\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9
         <input name="email" type="email" autocomplete="email" required />
       </label>
-      <button class="secondary" type="submit">\u652F\u6255\u3044\u3078\u9032\u3080</button>
+      <button class="secondary" type="submit">\u6708\u984D ${PRICE_YEN.toLocaleString("ja-JP")}\u5186\u3067\u59CB\u3081\u308B</button>
     </form>
+    <form method="post" action="/billing/checkout">
+      <input type="hidden" name="plan" value="annual" />
+      <label>\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9
+        <input name="email" type="email" autocomplete="email" required />
+      </label>
+      <button class="secondary" type="submit">\u5E74\u984D ${ANNUAL_YEN.toLocaleString("ja-JP")}\u5186\u3067\u59CB\u3081\u308B</button>
+    </form>
+    <p>\u904B\u55B6\u306F${OPERATOR_NAME}\u3067\u3059\u3002</p>
   </section>
   <p class="patent">${PATENT_LABEL}</p>
 </main>
@@ -8876,7 +9488,11 @@ async function billingPost(request, env, pathname) {
     if (started.ok) return noticeRedirect(request, "trial_started");
     return noticeRedirect(request, started.reason || "invalid_email");
   }
-  const session = await createCheckoutSession(env, { email: form.email, origin: publicOrigin(request) });
+  const session = await createCheckoutSession(env, {
+    email: form.email,
+    origin: publicOrigin(request),
+    planId: form.plan || "monthly"
+  });
   if (!session.ok) {
     return noticeRedirect(request, session.reason === "invalid_email" ? "invalid_email" : "checkout_pending");
   }
@@ -9052,6 +9668,8 @@ var index_default = {
     const canonical = canonicalUrl(request);
     if (canonical) return redirect(canonical.toString(), 308);
     const url = new URL(request.url);
+    const storeBilling = await handleStoreBillingRequest(request, env);
+    if (storeBilling) return storeBilling;
     const oauth = await handleOAuthRoute(request, env, publicOrigin(request));
     if (oauth) return oauth;
     if (url.pathname === "/oauth/google/start" && request.method === "GET") return googleStart(request, env);

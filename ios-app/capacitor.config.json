@@ -9,6 +9,9 @@
     "limitsNavigationsToAppBoundDomains": false,
     "backgroundColor": "#0A0A0F"
   },
+  "android": {
+    "backgroundColor": "#0A0A0F"
+  },
   "plugins": {
     "SplashScreen": {
       "launchAutoHide": true,

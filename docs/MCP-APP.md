@@ -190,7 +190,18 @@ npx wrangler kv namespace create CHATGPT_KV
 npx wrangler secret put STRIPE_SECRET_KEY
 npx wrangler secret put STRIPE_WEBHOOK_SECRET
 npx wrangler secret put STRIPE_PRICE_ID
+npx wrangler secret put STRIPE_ANNUAL_PRICE_ID
+npx wrangler secret put STORE_WEBHOOK_TOKEN
+npx wrangler secret put INTERNAL_ENTITLEMENT_TOKEN
 npx wrangler secret put MCP_ACCESS_TOKEN
 ```
 
-`wrangler.toml` の KV id がゼロのままでは、しおり、受信、送信前の状態、Gmail のリフレッシュトークンを保存できません。
+`STRIPE_PRICE_ID` は月額 2,980 円、`STRIPE_ANNUAL_PRICE_ID` は年額 29,800 円です。金額の正本は `web-app/billing/plans.js` です。Webhook はこれまでどおり `https://reply.kimitotalk.link/billing/webhook` の一つで、`STRIPE_WEBHOOK_SECRET` もこの Worker だけに置きます。
+
+`wrangler.toml` の KV id がゼロのままでは、しおり、受信、送信前の状態、Gmail のリフレッシュトークン、契約を保存できません。
+
+### 一つの契約
+
+アカウントは、MCP の OAuth と Google ログインと同じメールアドレスです。契約は `CHATGPT_KV` の `entitlement:<メール>` に一つ置き、Stripe・App Store・Google Play・ライセンスのどれか一つでも有効なら、カード、Web、iOS、Android の全部が開きます。ストアにはメールを渡さず、同じメールから作った UUID を `appAccountToken` と `obfuscatedExternalAccountId` に使います。
+
+ストアの手順、シークレット名、日本の外部購入リンク（既定オフ）は [STORE-BILLING.md](STORE-BILLING.md) です。アップロード時の名前の一覧は [../chatgpt-app/deploy/DEPLOY-CHECKLIST.md](../chatgpt-app/deploy/DEPLOY-CHECKLIST.md) です。

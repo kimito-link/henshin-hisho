@@ -8,11 +8,11 @@
 CI=true WRANGLER_SEND_METRICS=false npx --yes wrangler@4 deploy --dry-run --outdir dist-deploy
 ```
 
-Wrangler 4.151.3。`--dry-run` はパッケージしただけで終了し、アカウントには繋がりません。成果の `index.js` だけをここへ移し、`index.js.map` と `//# sourceMappingURL` は外しました。`dist-deploy/` はコミットしません。
+Wrangler 4.154.0。`--dry-run` はパッケージしただけで終了し、アカウントには繋がりません。成果の `index.js` だけをここへ移し、`index.js.map` と `//# sourceMappingURL` は外しました。`dist-deploy/` はコミットしません。
 
 - Worker 名: `henshin-hisho-chatgpt`
 - エントリ: `index.js`（ESM、`export default` に `fetch` / `email` / `scheduled`）
-- サイズ: 約 330 KiB（dry-run の表示は gzip 前 329.65 KiB）
+- サイズ: 約 356 KiB（dry-run の表示は gzip 前 355.55 KiB）
 - `cloudflare:sockets` は `import("cloudflare:sockets")` のまま残しています。SMTP の 587（STARTTLS）と 465（即 TLS）はこれで話します。
 - `email()` は例外を外に出さず、受信失敗でもバウンスしません。
 - `send_email` バインディングは付けません。
@@ -54,7 +54,7 @@ D1 バインディングはありません。プレビュー用の `preview_id`�
 
 ## 互換性
 
-`compatibility_date` は `2026-10-22` です。`compatibility_flags` は入れていません。2026-08-04 以降の互換日付は `nodejs_compat` と `nodejs_compat_v2` を既定で有効にし、同じフラグを新設定へ重ねる必要はありません（[2026-08-04 の変更](https://developers.cloudflare.com/changelog/post/2026-08-04-nodejs-compat-default/)）。バンドルに `node:` の import はありません。`postal-mime` はバンドル済みです。
+`compatibility_date` は `2026-10-22` です。`compatibility_flags` は入れていません。2026-08-04 以降の互換日付は `nodejs_compat` と `nodejs_compat_v2` を既定で有効にし、同じフラグを新設定へ重ねる必要はありません（[2026-08-04 の変更](https://developers.cloudflare.com/changelog/post/2026-08-04-nodejs-compat-default/)）。App Store の証明書チェーン確認だけ `import("node:crypto")` で `X509Certificate` を動的に読みます。フラグは足しません。`postal-mime` はバンドル済みです。
 
 ## プレーンテキスト（metadata にはまだ無い）
 
@@ -65,8 +65,9 @@ D1 バインディングはありません。プレビュー用の `preview_id`�
 | `ALLOWED_GMAIL` | 接続してよい Gmail を 1 アドレスに固定するとき。小文字のメールアドレス |
 | `MS_OAUTH_ENABLED` | `"1"` のときだけ Microsoft の送信（XOAUTH2）を有効にする。同時に `MS_CLIENT_ID` と `MS_CLIENT_SECRET` が必要 |
 | `MCP_AUTH_REQUIRED` | `"1"` で、Bearer の無い `/mcp` を 401 にする。本番はこれを付ける |
-| `BACKEND_URL` | LLM 下書き。例: backend のオリジン。`INTERNAL_DRAFT_TOKEN` と `DRAFT_SERVICE_USER_ID` と揃ったときだけ `/internal/reply-drafts` を呼ぶ。どれかが無いときは定型文 |
+| `BACKEND_URL` | LLM 下書きと、契約の写し先。例: backend のオリジン。下書きは `INTERNAL_DRAFT_TOKEN` と `DRAFT_SERVICE_USER_ID` が揃ったときだけ `/internal/reply-drafts`。契約の写しは `INTERNAL_ENTITLEMENT_TOKEN` が揃ったときだけ `POST /internal/entitlement` |
 | `DRAFT_SERVICE_USER_ID` | backend の costGuard が予約する利用者 ID。このアプリの回数カウンタとは別人 |
+| `PLAY_PACKAGE_NAME` | 任意。空なら `jp.besttrust.henshinhisho`。変えるときだけ足す |
 
 ## シークレット
 
@@ -83,7 +84,13 @@ D1 バインディングはありません。プレビュー用の `preview_id`�
 | `INTERNAL_DRAFT_TOKEN` | LLM を使うとき、backend Worker の同じトークンと**一致**させる。使わないなら空のままで定型文 |
 | `STRIPE_SECRET_KEY` | このアプリの Checkout 用。`STRIPE_PRICE_ID` と両方あるときだけ決済 URL を作る。linebot の鍵と自動では共有しない |
 | `STRIPE_WEBHOOK_SECRET` | Stripe がそのエンドポイントに出す `whsec_…`。署名は HMAC SHA-256、許容は 300 秒。エンドポイントは `https://reply.kimitotalk.link/billing/webhook` |
-| `STRIPE_PRICE_ID` | 月額 2,980 円（年額 29,800 円の表示は料金ページ）の Price ID。Checkout の `line_items[0][price]` |
+| `STRIPE_PRICE_ID` | 月額 2,980 円の Price ID。正本は `web-app/billing/plans.js`。Checkout の `line_items[0][price]` |
+| `STRIPE_ANNUAL_PRICE_ID` | 年額 29,800 円の Price ID。月額と同じ秘密の置き方。無いときは年額の決済 URL は作らない |
+| `STORE_WEBHOOK_TOKEN` | App Store Server Notifications v2 と Play の Real-time developer notifications が URL に付けるトークン。空だと二つの通知口は 401 |
+| `INTERNAL_ENTITLEMENT_TOKEN` | backend Worker の同じ名前と**一致**させる。契約レコードを二つの Worker の間で写す |
+| `PLAY_ACCESS_TOKEN` | 任意。Play の購読確認に使う短いトークン。あるときはこちらを優先する |
+| `GOOGLE_PLAY_SA_JSON` | 任意。Play のサービスアカウント JSON。`PLAY_ACCESS_TOKEN` が無いとき、この JSON から確認用トークンを作る |
+| `APPLE_IAP_TRUST_JWK` | 任意。試験用の公開鍵 JSON。本番の App Store 通知は JWS の x5c と、コード内の Apple Root CA G3 の SHA-256 で確かめる。本番では空でよい |
 | `MS_CLIENT_ID` | Microsoft 送信を有効にするときだけ。Entra のアプリ ID。無効のままなら Microsoft は受信だけ |
 | `MS_CLIENT_SECRET` | 上と同じアプリの秘密。無効のままなら不要 |
 
@@ -118,10 +125,38 @@ D1 バインディングはありません。プレビュー用の `preview_id`�
 
 ## Stripe
 
-1. 秘密三つを上の表のとおり入れる。
-2. Webhook のエンドポイントを `https://reply.kimitotalk.link/billing/webhook` にする。
-3. 署名秘密を `STRIPE_WEBHOOK_SECRET` にする。
-4. Checkout は `STRIPE_SECRET_KEY` と `STRIPE_PRICE_ID` が両方あるときだけ動きます。無いときは料金ページは出て、決済 URL は作りません。
+1. 月額の Price（2,980 円）と年額の Price（29,800 円）を作る。
+2. `STRIPE_SECRET_KEY`、`STRIPE_PRICE_ID`、`STRIPE_ANNUAL_PRICE_ID`、`STRIPE_WEBHOOK_SECRET` を上の表のとおり入れる。
+3. Webhook のエンドポイントを `https://reply.kimitotalk.link/billing/webhook` にする。署名秘密は `STRIPE_WEBHOOK_SECRET`。この Worker だけが受けます。
+4. 月額の Checkout は `STRIPE_SECRET_KEY` と `STRIPE_PRICE_ID`、年額は `STRIPE_SECRET_KEY` と `STRIPE_ANNUAL_PRICE_ID` が揃ったときだけ動きます。無いプランは料金ページに出て、決済 URL は作りません。
+5. Checkout のメールは、MCP と Web とアプリのログインと同じメールにします。このメールが契約の鍵です。
+
+## ストアの契約
+
+手順の全文は [docs/STORE-BILLING.md](../../docs/STORE-BILLING.md) です。ここには名前と入口だけ置きます。提出はしません。
+
+chatgpt-app に足す入口:
+
+- `POST /billing/apple/notifications?token=<STORE_WEBHOOK_TOKEN>`
+- `POST /billing/google/notifications?token=<STORE_WEBHOOK_TOKEN>`
+- `GET /internal/entitlement` と `POST /internal/entitlement`（`Authorization: Bearer <INTERNAL_ENTITLEMENT_TOKEN>`）
+
+backend Worker（`henshin-hisho-app`）にも、同じ契約のために次の名前を置きます。値はここに書きません。
+
+| 名前 | 置き方 |
+| --- | --- |
+| `STRIPE_SECRET_KEY` | secret。Web の Checkout |
+| `STRIPE_PRICE_ID` | secret。月額。chatgpt-app と同じ Price |
+| `STRIPE_ANNUAL_PRICE_ID` | secret。年額。chatgpt-app と同じ Price |
+| `INTERNAL_ENTITLEMENT_TOKEN` | secret。chatgpt-app と**同じ**値 |
+| `CHATGPT_APP_URL` | plain。`https://reply.kimitotalk.link` |
+| `PLAY_ACCESS_TOKEN` | secret、任意 |
+| `GOOGLE_PLAY_SA_JSON` | secret、任意。サービスアカウント JSON |
+| `APPLE_IAP_TRUST_JWK` | secret、任意。試験用。本番は空 |
+| `PLAY_PACKAGE_NAME` | plain、任意。既定 `jp.besttrust.henshinhisho` |
+| `APPLE_EXTERNAL_PURCHASE_LINK` | plain。未設定がオフ。`"1"` は、審査済みの iOS ビルドで日本の外部購入リンクを出すときだけ |
+
+`APPLE_EXTERNAL_PURCHASE_LINK` は backend だけです。chatgpt-app には置きません。iOS のビルド定数 `EXTERNAL_PURCHASE_LINK_ENABLED` も `false` のままです。両方オンになるまで、アプリ内に Stripe のリンクは出ません。Apple が求める手続きは STORE-BILLING.md に書いてあります。料率はそこにも書いていません。
 
 ## Microsoft（送るときだけ）
 
@@ -141,4 +176,4 @@ D1 バインディングはありません。プレビュー用の `preview_id`�
 
 ## まだ実機で見ていないもの
 
-iCloud からの実際の送信と、Microsoft OAuth の同意から送信までは、このバンドルでも未確認です。各社の SMTP へはこの環境から繋いでいません。
+iCloud からの実際の送信と、Microsoft OAuth の同意から送信までは、このバンドルでも未確認です。各社の SMTP へはこの環境から繋いでいません。App Store と Google Play への提出、実機での購入、Stripe の本番 Checkout もしていません。契約のマージと通知の検証はテストのフィクスチャで確認しています。

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from './http.js';
+import { normalizeEmail, timingSafeEqual } from './http.js';
 
 const SCOPE = 'replies';
 const CODE_TTL = 300;
@@ -78,7 +78,7 @@ function formPage(params, error = '') {
 <style>body{font-family:system-ui,sans-serif;margin:24px;line-height:1.5}button{font-size:16px;padding:10px 14px}</style>
 </head><body><h1>返信秘書への接続</h1><p>この画面を許可すると、クライアントは作成カードを呼べます。メールの送信は、カードの「送信」を押したときだけです。</p>
 ${error ? `<p>${escapeHtml(error)}</p>` : ''}
-<form method="post">${hidden}<label>接続キー<input name="key" type="password" required></label><button type="submit">許可する</button></form></body></html>`;
+<form method="post">${hidden}<label>アカウントのメールアドレス<input name="email" type="email" autocomplete="email"></label><label>接続キー<input name="key" type="password" required></label><button type="submit">許可する</button></form></body></html>`;
 }
 
 function redirectAllowed(uri) {
@@ -133,10 +133,17 @@ async function authorize(request, env) {
       headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     });
   }
+  const accountEmail = normalizeEmail(params.get('email') || '');
+  if (params.get('email') && !accountEmail) {
+    return new Response(formPage(params, 'メールアドレスの形式を確認してください。'), {
+      status: 400,
+      headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+    });
+  }
   const code = crypto.randomUUID();
   await env.CHATGPT_KV.put(
     `oauth-code:${code}`,
-    JSON.stringify({ clientId, redirectUri, challenge, state }),
+    JSON.stringify({ clientId, redirectUri, challenge, state, accountEmail }),
     { expirationTtl: CODE_TTL }
   );
   const back = new URL(redirectUri);
@@ -152,7 +159,7 @@ async function token(request, env) {
   if (grant === 'refresh_token') {
     const record = await readJson(env, `oauth-refresh:${body.get('refresh_token') || ''}`);
     if (!record) return json({ error: 'invalid_grant' }, 400);
-    return issue(env, record.clientId);
+    return issue(env, record.clientId, record.accountEmail || '');
   }
   if (grant !== 'authorization_code') return json({ error: 'unsupported_grant_type' }, 400);
   const code = body.get('code') || '';
@@ -163,14 +170,19 @@ async function token(request, env) {
   }
   const hashed = await sha256(body.get('code_verifier') || '');
   if (!timingSafeEqual(hashed, record.challenge)) return json({ error: 'invalid_grant' }, 400);
-  return issue(env, record.clientId);
+  return issue(env, record.clientId, record.accountEmail || '');
 }
 
-async function issue(env, clientId) {
+async function issue(env, clientId, accountEmail = '') {
   const access = crypto.randomUUID();
   const refresh = crypto.randomUUID();
-  await env.CHATGPT_KV.put(`oauth-access:${access}`, JSON.stringify({ clientId, scope: SCOPE }), { expirationTtl: ACCESS_TTL });
-  await env.CHATGPT_KV.put(`oauth-refresh:${refresh}`, JSON.stringify({ clientId }));
+  const identity = accountEmail ? { accountEmail } : {};
+  await env.CHATGPT_KV.put(
+    `oauth-access:${access}`,
+    JSON.stringify({ clientId, scope: SCOPE, ...identity }),
+    { expirationTtl: ACCESS_TTL }
+  );
+  await env.CHATGPT_KV.put(`oauth-refresh:${refresh}`, JSON.stringify({ clientId, ...identity }));
   return json({ access_token: access, token_type: 'Bearer', expires_in: ACCESS_TTL, refresh_token: refresh, scope: SCOPE });
 }
 

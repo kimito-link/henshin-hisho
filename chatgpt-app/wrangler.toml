@@ -9,6 +9,12 @@ compatibility_date = "2026-10-22"
 #   npx wrangler secret put STRIPE_SECRET_KEY
 #   npx wrangler secret put STRIPE_WEBHOOK_SECRET
 #   npx wrangler secret put STRIPE_PRICE_ID
+#   npx wrangler secret put STRIPE_ANNUAL_PRICE_ID
+#   npx wrangler secret put STORE_WEBHOOK_TOKEN
+#   npx wrangler secret put INTERNAL_ENTITLEMENT_TOKEN
+#   npx wrangler secret put PLAY_ACCESS_TOKEN
+#   npx wrangler secret put GOOGLE_PLAY_SA_JSON
+#   npx wrangler secret put APPLE_IAP_TRUST_JWK
 #   npx wrangler secret put MCP_ACCESS_TOKEN
 #   npx wrangler secret put GOOGLE_CLIENT_SECRET
 #   npx wrangler secret put OAUTH_ADMIN_KEY
@@ -23,6 +29,8 @@ compatibility_date = "2026-10-22"
 # notify@kimitotalk.link は linebot のままにし、この Worker には向けない。
 # send_email バインディングは使わない。
 # Microsoft の送信を有効にするときは vars に MS_OAUTH_ENABLED = "1" を足す。
+# 日本の外部購入リンク APPLE_EXTERNAL_PURCHASE_LINK は backend Worker 側。ここには置かない。既定オフ。
+# Play のパッケージを変えるときだけ vars に PLAY_PACKAGE_NAME を足す。既定は jp.besttrust.henshinhisho。
 # 送信済みの返信検出を動かすときは次を足す。
 # [triggers]
 # crons = ["*/15 * * * *"]

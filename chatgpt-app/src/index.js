@@ -5,6 +5,7 @@
  * KV バインディング: CHATGPT_KV。
  */
 import { applyStripeEvent, createCheckoutSession, startTrial, verifyStripeSignature } from './billing.js';
+import { handleStoreBillingRequest } from './store-billing.js';
 import { canonicalUrl, htmlHeaders, json, mcpCorsHeaders, publicOrigin, readForm, sameSitePost, timingSafeEqual } from './http.js';
 import { exchangeGoogleCode } from './gmail.js';
 import { saveIncoming } from './incoming.js';
@@ -40,7 +41,11 @@ async function billingPost(request, env, pathname) {
     if (started.ok) return noticeRedirect(request, 'trial_started');
     return noticeRedirect(request, started.reason || 'invalid_email');
   }
-  const session = await createCheckoutSession(env, { email: form.email, origin: publicOrigin(request) });
+  const session = await createCheckoutSession(env, {
+    email: form.email,
+    origin: publicOrigin(request),
+    planId: form.plan || 'monthly'
+  });
   if (!session.ok) {
     return noticeRedirect(request, session.reason === 'invalid_email' ? 'invalid_email' : 'checkout_pending');
   }
@@ -221,6 +226,8 @@ export default {
     if (canonical) return redirect(canonical.toString(), 308);
 
     const url = new URL(request.url);
+    const storeBilling = await handleStoreBillingRequest(request, env);
+    if (storeBilling) return storeBilling;
     const oauth = await handleOAuthRoute(request, env, publicOrigin(request));
     if (oauth) return oauth;
     if (url.pathname === '/oauth/google/start' && request.method === 'GET') return googleStart(request, env);
