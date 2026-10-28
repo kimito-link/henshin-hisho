@@ -108,6 +108,25 @@ await test('account plan transitions from trial to expired', async () => {
   assert.equal(accountPlan({ trialEndsAt: now - 1 }, now).plan, 'expired');
 });
 
+await test('one active store source keeps the account unlocked', async () => {
+  const now = 1_700_000_000;
+  const account = accountPlan({
+    plan: 'expired',
+    trialEndsAt: now - 10,
+    entitlementRecord: {
+      trialEndsAt: now - 10,
+      sources: {
+        stripe: { active: false, currentPeriodEnd: now - 10 },
+        apple: { active: true, currentPeriodEnd: now + 86400 }
+      }
+    }
+  }, now);
+  assert.equal(account.plan, 'active');
+  assert.equal(account.unlocked, true);
+  assert.equal(account.priceYen, 2980);
+  assert.equal(account.annualYen, 29800);
+});
+
 await test('account delete removes the user, indexes, sessions, and user-owned keys', async () => {
   const env = createEnv();
   const { json } = await signup(env, 'delete@example.com', 'password123');

@@ -13,11 +13,15 @@
     "appstore:submit": "node scripts/appstore-submit.mjs",
     "release-notes": "node scripts/generate-release-notes.mjs --write",
     "cap:splash": "node scripts/generate-capacitor-splash.mjs",
-    "cap:sync": "npx cap sync ios"
+    "cap:sync": "npx cap sync ios",
+    "cap:add:android": "npx cap add android",
+    "subscriptions:dry-run": "node scripts/asc-subscriptions.mjs && node scripts/play-subscriptions.mjs"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.0",
     "@capacitor/app": "^8.0.0",
     "@capacitor/core": "^8.0.0",
+    "@capgo/native-purchases": "^8.0.0",
     "@capacitor/push-notifications": "^8.0.0",
     "@capacitor/share": "^8.0.0",
     "@capawesome/capacitor-badge": "^8.0.0"

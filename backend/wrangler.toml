@@ -1,3 +1,15 @@
+# 契約を全画面で揃えるときに足すシークレット（値はここに書かない）:
+#   npx wrangler secret put STRIPE_SECRET_KEY
+#   npx wrangler secret put STRIPE_PRICE_ID
+#   npx wrangler secret put STRIPE_ANNUAL_PRICE_ID
+#   npx wrangler secret put INTERNAL_ENTITLEMENT_TOKEN
+#   npx wrangler secret put PLAY_ACCESS_TOKEN
+#   npx wrangler secret put GOOGLE_PLAY_SA_JSON
+#   npx wrangler secret put APPLE_IAP_TRUST_JWK
+# プレーンテキスト（既定は空。外部購入リンクはオフ）:
+#   CHATGPT_APP_URL = "https://reply.kimitotalk.link"
+#   APPLE_EXTERNAL_PURCHASE_LINK = "1" は、審査済みビルドでリンクを出すときだけ
+#   PLAY_PACKAGE_NAME は変えるときだけ。既定は jp.besttrust.henshinhisho
 name = "henshin-hisho-app"
 main = "src/index.js"
 compatibility_date = "2026-07-06"

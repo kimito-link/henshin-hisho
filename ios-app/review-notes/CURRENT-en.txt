@@ -1,6 +1,6 @@
 Hello App Review team,
 
-This build is a free B2B companion app for AI Reply Secretary, operated by Best Trust Co., Ltd. It is a login-gated operational dashboard for authorized business users.
+This build is the iOS app for AI Reply Secretary, operated by Best Trust Co., Ltd. It is a login-gated operational dashboard. The paid plan is an auto-renewable subscription on the Plan screen.
 
 Demo access:
 - Email: appreview@best-trust.biz
@@ -9,10 +9,9 @@ Demo access:
 - When entering the password, please include the trailing "!" and add no surrounding spaces.
 - Steps: launch app -> enter the email and password above -> tap ログイン (Log in) -> the Inbox (受信箱) opens with seeded review data where you can review items and AI-assisted reply drafts. Settings (設定) manages notifications and account deletion.
 
-Guideline 3.1.3(f):
-"Free apps acting as a stand-alone companion to a paid web based tool ... do not need to use in-app purchase, provided there is no purchasing inside the app, or calls to action for purchase outside of the app."
+Auto-renewable subscriptions are sold with StoreKit. This build does not include an external purchase link.
 
-The iOS app has no in-app purchase, no purchase page, no paywall, no external purchase call to action, and no paid unlock. The iOS binary uses a local Capacitor webDir that excludes the web billing route entirely.
+The Plan screen offers the monthly and annual auto-renewable subscriptions, restore purchases, and the store subscription management page. There is no link to an outside checkout in this build. The same account can be used on the web and in the chat card after the store confirms the subscription.
 
 Guideline 4.8 carve-out #1:
 "Your app exclusively uses your company's own account setup and sign-in systems."
@@ -20,13 +19,13 @@ Guideline 4.8 carve-out #1:
 The iOS app exposes only our own email/password account system. It does not show Google login, social login, or Gmail OAuth. Gmail connection is completed on the web service, outside the iOS app. Sign in with Apple is therefore not required under carve-out #1.
 
 Business model answers:
-1. Users of paid services: business customers of the web service outside the iOS app; the iOS app itself has no paid service.
-2. Where purchase occurs: nowhere in or from the iOS app. Commercial contracts are handled off-platform.
-3. Previously purchased services accessible in app: operational inbox review for authorized business users.
-4. Paid content or features unlocked without IAP: none.
+1. Users of paid services: business customers who subscribe in the app with StoreKit, or with the same account on the web.
+2. Where purchase occurs: the Plan screen, through StoreKit auto-renewable subscriptions. This build has no external purchase link.
+3. Previously purchased services accessible in app: restore purchases reads the store subscription for the signed-in account.
+4. Paid content or features unlocked without IAP: this app sells the same auto-renewable subscription with StoreKit. An account that already has an active subscription on our server is recognized in the app. This build does not include a link to purchase outside the app.
 5. Enterprise services sold to consumers or families: no. They are B2B services.
-6. Account creation and fees: accounts are provisioned for authorized business users. There is no fee inside the app.
-7. Individual customers paying for content: no. The app is a free companion.
+6. Account creation and fees: accounts use our own email and password. The fee is the auto-renewable subscription shown on the Plan screen.
+7. Individual customers paying for content: customers pay through the auto-renewable subscription. The app does not send email automatically.
 
 Native functionality:
 - Push notification registration.

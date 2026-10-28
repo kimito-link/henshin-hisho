@@ -53,6 +53,22 @@
       </article>
     </section>
 
+    <section id="planView" class="view" hidden>
+      <h1>プラン</h1>
+      <section class="panel form-stack">
+        <p id="planStatus" class="plan-status">プランを確認しています。</p>
+        <p>月額 2,980円、年額 29,800円です。同じアカウントで、このアプリと Web、会話の中の作成カードが使えます。</p>
+        <button id="buyMonthlyButton" type="button">月額で申し込む</button>
+        <button id="buyAnnualButton" class="secondary" type="button">年額で申し込む</button>
+        <button id="restorePurchasesButton" class="secondary" type="button">購入を復元</button>
+        <button id="manageStoreButton" class="secondary" type="button">ストアの定期購入を開く</button>
+        <p id="externalPurchaseSlot"></p>
+        <p id="planNote" class="plan-status" aria-live="polite"></p>
+        <p class="plan-status">運営は株式会社ベストトラストです。メールは、確認したときだけ送ります。</p>
+        <p class="plan-status">特許出願中（特願2026-159882・特願2026-040421・特願2026-041498・特願2026-206930・特願2026-227084）</p>
+      </section>
+    </section>
+
     <section id="settingsView" class="view" hidden>
       <h1>設定</h1>
       <section class="panel form-stack">
@@ -95,6 +111,7 @@
 
   <nav id="tabbar" class="tabbar" aria-label="ネイティブタブバー" hidden>
     <button class="tab-button" type="button" data-route="/inbox">受信箱</button>
+    <button class="tab-button" type="button" data-route="/plan">プラン</button>
     <button class="tab-button" type="button" data-route="/settings">設定</button>
   </nav>
 

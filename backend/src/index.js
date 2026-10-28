@@ -1,4 +1,12 @@
-import { accountPlan, linkLicense, login, requestMagicLink, requireAuth, signup } from './auth.js';
+import { accountPlan, applySharedEntitlement, linkLicense, login, requestMagicLink, requireAuth, signup } from './auth.js';
+import {
+  checkoutForUser,
+  internalTokenOk,
+  refreshEntitlement,
+  storeAccountForUser,
+  verifyAppleForUser,
+  verifyGoogleForUser
+} from './store-routes.js';
 import { accountPolicyForUser, updateAccountPolicy } from './account-policy.js';
 import { connectGmail } from './connectors/gmail.js';
 import { handleLineWebhook } from './connectors/line.js';
@@ -8,6 +16,7 @@ import {
   unsubscribeDigestByToken,
   updateDigestSettings
 } from './digest.js';
+import { handleInternalReplyDrafts } from './internal-drafts.js';
 import {
   handleConfirmRisk,
   handleDraft,
@@ -59,7 +68,8 @@ async function accountResponse(request, env) {
         avgCaseValue: Number(auth.user.avgCaseValue || 0)
       },
       features: {
-        gmailConnectEnabled: String(env.GMAIL_CONNECT_ENABLED || 'false').toLowerCase() === 'true'
+        gmailConnectEnabled: String(env.GMAIL_CONNECT_ENABLED || 'false').toLowerCase() === 'true',
+        externalPurchaseLink: env.APPLE_EXTERNAL_PURCHASE_LINK === '1'
       }
     });
   } catch (error) {
@@ -68,6 +78,49 @@ async function accountResponse(request, env) {
     }
     return jsonResponse(request, env, { ok: false, reason: 'server_error' }, 500);
   }
+}
+
+async function authedBilling(request, env, action) {
+  try {
+    const auth = await requireAuth(request, env);
+    if (!auth.ok) return jsonResponse(request, env, auth.body, auth.status);
+    const payload = await readJson(request);
+    const result = await action(auth.user, payload || {});
+    return jsonResponse(request, env, result.body, result.status);
+  } catch (error) {
+    if (error?.message === 'session_secret_not_configured') {
+      return jsonResponse(request, env, { ok: false, reason: 'session_secret_not_configured' }, 503);
+    }
+    return jsonResponse(request, env, { ok: false, reason: 'server_error' }, 500);
+  }
+}
+
+async function billingCheckoutResponse(request, env) {
+  return authedBilling(request, env, (user, payload) => checkoutForUser(env, user, payload.planId));
+}
+
+async function billingRefreshResponse(request, env) {
+  return authedBilling(request, env, async (user) => refreshEntitlement(env, user));
+}
+
+async function billingStoreAccountResponse(request, env) {
+  return authedBilling(request, env, async (user) => ({ status: 200, body: await storeAccountForUser(user) }));
+}
+
+async function billingAppleResponse(request, env) {
+  return authedBilling(request, env, (user, payload) => verifyAppleForUser(env, user, payload.signedTransaction));
+}
+
+async function billingGoogleResponse(request, env) {
+  return authedBilling(request, env, (user, payload) => verifyGoogleForUser(env, user, payload.purchaseToken));
+}
+
+async function internalEntitlementResponse(request, env) {
+  if (!internalTokenOk(request, env)) return jsonResponse(request, env, { ok: false, reason: 'unauthorized' }, 401);
+  const payload = await readJson(request);
+  if (!payload) return jsonResponse(request, env, { ok: false, reason: 'invalid_json' }, 400);
+  const result = await applySharedEntitlement(env, payload);
+  return jsonResponse(request, env, { ok: result.ok, reason: result.reason || '', account: result.account || null }, result.status);
 }
 
 async function reportSettingsResponse(request, env) {
@@ -222,6 +275,24 @@ export default {
     if (url.pathname === '/account/policy-settings' && request.method === 'POST') {
       return await policySettingsResponse(request, env);
     }
+    if (url.pathname === '/billing/checkout' && request.method === 'POST') {
+      return await billingCheckoutResponse(request, env);
+    }
+    if (url.pathname === '/billing/refresh' && request.method === 'POST') {
+      return await billingRefreshResponse(request, env);
+    }
+    if (url.pathname === '/billing/store-account' && request.method === 'POST') {
+      return await billingStoreAccountResponse(request, env);
+    }
+    if (url.pathname === '/billing/apple/transaction' && request.method === 'POST') {
+      return await billingAppleResponse(request, env);
+    }
+    if (url.pathname === '/billing/play/purchase' && request.method === 'POST') {
+      return await billingGoogleResponse(request, env);
+    }
+    if (url.pathname === '/internal/entitlement' && request.method === 'POST') {
+      return await internalEntitlementResponse(request, env);
+    }
     if (url.pathname === '/report/weekly' && request.method === 'GET') {
       return await weeklyReportResponse(request, env);
     }
@@ -248,6 +319,9 @@ export default {
     }
     if (url.pathname === '/inbox/assess' && request.method === 'POST') {
       return await handleInboxAssess(request, env);
+    }
+    if (url.pathname === '/internal/reply-drafts' && request.method === 'POST') {
+      return await handleInternalReplyDrafts(request, env);
     }
 
     const inboxMatch = inboxRouteMatch(url.pathname);
