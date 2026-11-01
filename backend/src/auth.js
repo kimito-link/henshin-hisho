@@ -1,3 +1,5 @@
+import { mergeEntitlement, withSource } from '../../shared/entitlement.js';
+import { planById } from '../../shared/plans.js';
 import {
   createOpaqueToken,
   createSignedSessionToken,
@@ -45,30 +47,24 @@ function randomUserId() {
 }
 
 export function accountPlan(user = {}, now = nowSeconds()) {
-  const currentPeriodEnd = Number(user.licenseCurrentPeriodEnd || 0);
-  if (user.plan === 'active' && (!currentPeriodEnd || currentPeriodEnd > now)) {
-    return {
-      plan: 'active',
-      trialEndsAt: user.trialEndsAt || 0,
-      currentPeriodEnd,
-      licenseKeyLinked: Boolean(user.licenseKey)
-    };
-  }
-  if (Number(user.trialEndsAt || 0) > now) {
-    return {
-      plan: 'trial',
-      trialEndsAt: user.trialEndsAt,
-      trialDaysRemaining: Math.max(0, Math.ceil((user.trialEndsAt - now) / 86400)),
-      currentPeriodEnd,
-      licenseKeyLinked: Boolean(user.licenseKey)
-    };
-  }
+  const record = user.entitlementRecord || {
+    plan: user.plan,
+    trialEndsAt: user.trialEndsAt,
+    currentPeriodEnd: Number(user.licenseCurrentPeriodEnd || 0)
+  };
+  const merged = mergeEntitlement(
+    { ...record, trialEndsAt: record.trialEndsAt || user.trialEndsAt || 0 },
+    now * 1000
+  );
   return {
-    plan: 'expired',
-    trialEndsAt: user.trialEndsAt || 0,
-    trialDaysRemaining: 0,
-    currentPeriodEnd,
-    licenseKeyLinked: Boolean(user.licenseKey)
+    plan: merged.plan,
+    trialEndsAt: user.trialEndsAt || record.trialEndsAt || 0,
+    trialDaysRemaining: merged.trialDaysRemaining,
+    currentPeriodEnd: merged.currentPeriodEnd,
+    unlocked: merged.unlocked,
+    licenseKeyLinked: Boolean(user.licenseKey),
+    priceYen: planById('monthly').priceYen,
+    annualYen: planById('annual').priceYen
   };
 }
 
@@ -249,6 +245,41 @@ export async function requestMagicLink(env, { email } = {}) {
   return { status: 200, body: { ok: true, mailed: mail.ok, reason: mail.reason || '' } };
 }
 
+function applyRecord(user, name, source) {
+  const base = user.entitlementRecord || {
+    email: user.email,
+    plan: user.plan,
+    trialEndsAt: user.trialEndsAt || 0,
+    currentPeriodEnd: Number(user.licenseCurrentPeriodEnd || 0)
+  };
+  const next = withSource(base, name, source);
+  const merged = mergeEntitlement(next);
+  return { ...next, email: user.email, plan: merged.plan, currentPeriodEnd: merged.currentPeriodEnd };
+}
+
+export async function applySharedEntitlement(env, { email, entitlement } = {}) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return { ok: false, status: 400, reason: 'invalid_email' };
+  const userId = await getUserIdByEmail(env, normalizedEmail);
+  const user = userId ? await getUser(env, userId) : null;
+  if (!user) return { ok: false, status: 404, reason: 'user_not_found' };
+  const entitlementRecord = {
+    ...(entitlement || {}),
+    email: normalizedEmail,
+    trialEndsAt: entitlement?.trialEndsAt || user.trialEndsAt || 0
+  };
+  const merged = mergeEntitlement(entitlementRecord);
+  const updated = {
+    ...user,
+    plan: merged.plan === 'none' ? user.plan : merged.plan,
+    licenseCurrentPeriodEnd: merged.currentPeriodEnd,
+    entitlementRecord: { ...entitlementRecord, plan: merged.plan, currentPeriodEnd: merged.currentPeriodEnd },
+    updatedAt: nowSeconds()
+  };
+  await putUser(env, updated);
+  return { ok: true, status: 200, account: accountPlan(updated) };
+}
+
 export async function linkLicense(env, user, { licenseKey } = {}, options = {}) {
   const key = normalizeText(licenseKey, 160);
   if (!key || key.length > 160) return { status: 400, body: { ok: false, reason: 'invalid_license_key' } };
@@ -263,11 +294,14 @@ export async function linkLicense(env, user, { licenseKey } = {}, options = {}) 
   if (!response.ok || body.ok !== true) {
     return { status: 400, body: { ok: false, reason: 'license_verify_failed' } };
   }
+  const periodEnd = Number(body.currentPeriodEnd || 0);
+  const entitlementRecord = applyRecord(user, 'license', { active: true, currentPeriodEnd: periodEnd });
   const updated = {
     ...user,
     plan: 'active',
     licenseKey: key,
-    licenseCurrentPeriodEnd: Number(body.currentPeriodEnd || 0),
+    licenseCurrentPeriodEnd: periodEnd,
+    entitlementRecord,
     updatedAt: nowSeconds()
   };
   await putUser(env, updated);

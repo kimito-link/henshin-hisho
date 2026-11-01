@@ -7,6 +7,9 @@
 // app.config.json を SSOT とする運用のため、このファイル自体は無改変で使える。
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { playSubscriptionDefinition, playSubscriptionV2Url } from '../../../shared/play-catalog.js';
+
+export { playSubscriptionDefinition, playSubscriptionV2Url };
 
 const SCOPE = 'https://www.googleapis.com/auth/androidpublisher';
 // 2026-09-08 追加: 売上ダッシュボードがインストール数CSVをCloud Storageから読むのに要る scope。

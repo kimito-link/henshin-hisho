@@ -167,7 +167,13 @@ async function renderBillingIfAllowed(account) {
   billingPanel.classList.remove('is-hidden');
   billingModulePromise = billingModulePromise || import('./billing/billing.js');
   var module = await billingModulePromise;
-  module.renderBillingPanel(billingPanel, account);
+  module.renderBillingPanel(billingPanel, account, {
+    onCheckout: async function (planId) {
+      var data = await api('/billing/checkout', { method: 'POST', body: { planId: planId } });
+      if (data.url) window.location.href = data.url;
+    },
+    onRefresh: refreshAccount
+  });
 }
 
 async function refreshAccount() {

@@ -40,11 +40,12 @@
     "dataDeletionUrl": "https://henshin-hisho.link/app/#/account/delete"
   },
   "businessModel": {
-    "hasInAppPurchase": false,
-    "hasSubscription": false,
+    "hasInAppPurchase": true,
+    "hasSubscription": true,
     "hasPaidContent": false,
-    "summaryJa": "iOSアプリは、Web側で契約済みの事業者向けに提供する無料コンパニオンです。アプリ内には購入、外部購入誘導、有料解除機能を置きません。",
-    "summaryEn": "The iOS app is a free B2B companion for authorized business users of the web service. It contains no purchasing, purchase links, paywalls, or paid unlocks."
+    "externalPurchaseLink": false,
+    "summaryJa": "月額または年額の自動更新です。iPhoneはApp Storeの定期購入です。Webと会話の作成カードは同じアカウントの契約です。このビルドの外部購入リンクはオフです。メールは自動送信しません。",
+    "summaryEn": "Auto-renewable monthly or annual subscription sold with StoreKit. The web and the chat card use the same account. This build does not include an external purchase link. The app never sends email automatically."
   },
   "ownership": {
     "organization": "株式会社ベストトラスト",
@@ -93,9 +94,11 @@
     "gmailOAuthInIosApp": false,
     "googleLoginInIosApp": false,
     "signInWithAppleRequired": false,
-    "iapExemption": "3.1.3(f)",
+    "iapExemption": "",
     "loginCarveOut": "4.8 carve-out #1",
     "billingTraceInIosBuild": false,
+    "storeBilling": "storekit",
+    "externalPurchaseLinkEnabled": false,
     "demoAccountEmail": "appreview@best-trust.biz",
     "demoAccountPasswordSource": "IOS_REVIEW_DEMO_PASSWORD / ASC Sign-In Information"
   }

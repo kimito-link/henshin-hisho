@@ -548,22 +548,17 @@ if (marketingVersion && /^\d+\.\d+\.\d+$/.test(String(marketingVersion))) {
   const captureScript = readFile('scripts/capture-appstore-screenshots.mjs') || '';
   const verifyScript = readFile('scripts/verify-reviewer-account.mjs') || '';
 
-  const buildTracePatterns = [
-    ['billing', /\bbilling\b/i],
-    ['stripe', /\bstripe\b/i],
-    ['upgrade', /\bupgrade\b|アップグレード/i],
-    ['iap', /\bIAP\b|in-app purchase/i],
-    ['purchase-copy', /購入|有料|支払い|決済|料金|課金|paywall|paid unlock/i],
-    ['trial-copy', /トライアル|\btrial\b/i],
-  ];
-  const buildHits = [];
-  for (const [name, pattern] of buildTracePatterns) {
-    if (pattern.test(wwwText)) buildHits.push(name);
-  }
-  if (buildHits.length > 0) {
-    fail('ios-build-billing-trace-zero', '3.1.3(f)', `www/ に課金痕跡: ${buildHits.join(', ')}`);
+  const stripeInWww = /\bstripe\b|checkout\.stripe|api\.stripe/i.test(wwwText);
+  const externalFlag = readFile('www/external-purchase.js') || '';
+  const externalOff = /EXTERNAL_PURCHASE_LINK_ENABLED = false/.test(externalFlag);
+  if (stripeInWww) {
+    fail('ios-no-stripe-in-binary', '3.1.1', 'www/ に Stripe の導線がある。外部購入リンクを出すビルド以外では置かない');
+  } else if (!externalOff) {
+    fail('ios-external-purchase-default-off', '3.1.1', 'EXTERNAL_PURCHASE_LINK_ENABLED が false ではない');
+  } else if (!wwwText.includes('購入を復元') || !wwwText.includes('月額で申し込む')) {
+    fail('ios-store-purchase-ui', '3.1.1', 'www/ にストアの申し込みと購入を復元が無い');
   } else {
-    ok('ios-build-billing-trace-zero', 'www/ に billing/IAP/upgrade/purchase/paywall/trial 痕跡なし');
+    ok('ios-store-purchase-ui', 'StoreKit/Play の購入UIがあり、Stripe と外部購入リンク既定はオフ');
   }
 
   if (/Google|OAuth|social login|Sign in with Apple/i.test(wwwText)) {
@@ -650,7 +645,7 @@ if (marketingVersion && /^\d+\.\d+\.\d+$/.test(String(marketingVersion))) {
   }
 
   const requiredNoteSnippets = [
-    'Free apps acting as a stand-alone companion to a paid web based tool',
+    'Auto-renewable subscriptions are sold with StoreKit. This build does not include an external purchase link.',
     "Your app exclusively uses your company's own account setup and sign-in systems",
     'Business model answers:',
     'Gmail connection is completed on the web service',
@@ -658,7 +653,7 @@ if (marketingVersion && /^\d+\.\d+\.\d+$/.test(String(marketingVersion))) {
   ];
   const missingNoteSnippets = requiredNoteSnippets.filter((snippet) => !reviewNotes.includes(snippet));
   if (missingNoteSnippets.length === 0 && /Email:\s*[^\s@]+@[^\s@]+\.[^\s@]+/.test(reviewNotes)) {
-    ok('reviewer-notes-pr8-required-content', '3.1.3(f), 4.8, 7 answers, Gmail OAuth, deletion, full demo email');
+    ok('reviewer-notes-pr8-required-content', 'StoreKit subscription, no external link, 4.8, business answers, deletion, full demo email');
   } else {
     fail(
       'reviewer-notes-pr8-required-content',

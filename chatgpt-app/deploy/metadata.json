@@ -1,0 +1,26 @@
+{
+  "main_module": "index.js",
+  "compatibility_date": "2026-10-22",
+  "bindings": [
+    {
+      "type": "kv_namespace",
+      "name": "CHATGPT_KV",
+      "namespace_id": "00000000000000000000000000000000"
+    },
+    {
+      "type": "plain_text",
+      "name": "GOOGLE_CLIENT_ID",
+      "text": "899798982543-2jk3d2fp97c02js71opg7l1j9fa7oh5a.apps.googleusercontent.com"
+    },
+    {
+      "type": "plain_text",
+      "name": "GOOGLE_REDIRECT_URI",
+      "text": "https://reply.kimitotalk.link/oauth/google/callback"
+    },
+    {
+      "type": "plain_text",
+      "name": "WORKER_PUBLIC_URL",
+      "text": "https://reply.kimitotalk.link"
+    }
+  ]
+}

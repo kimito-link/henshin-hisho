@@ -2,7 +2,7 @@
   --bg: #f8fafc;
   --panel: #ffffff;
   --fg: #0f172a;
-  --muted: #64748b;
+  --muted: #334155;
   --line: #e2e8f0;
   --accent: #1d4ed8;
   --accent-soft: #eff6ff;
@@ -54,7 +54,7 @@ button:disabled { opacity: 0.55; }
   border-bottom: 1px solid var(--line);
 }
 .topbar strong, .topbar span { display: block; }
-.topbar span, .status, .empty { color: var(--muted); font-size: 13px; }
+.topbar span, .status, .empty, .plan-status { color: var(--muted); font-size: 13px; }
 .icon-button {
   min-height: 36px;
   padding: 6px 10px;

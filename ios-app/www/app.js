@@ -1,3 +1,6 @@
+import { externalPurchaseHref } from './external-purchase.js';
+import { openStoreSubscriptions, purchasePlan, restorePurchases } from './store-purchases.js';
+
 const API_BASE = 'https://henshin-hisho-app.info-a40.workers.dev';
 const TOKEN_KEY = 'hh_ios_token';
 const NATIVE_AUTH_ALLOWLIST = new Set(['/sign-in', '/privacy', '/terms', '/support', '/account/delete']);
@@ -16,6 +19,8 @@ const SHELVES = [
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || '',
   account: null,
+  plan: null,
+  features: {},
   items: [],
   buckets: {},
   selectedShelf: 'needs_reply',
@@ -50,7 +55,15 @@ const el = {
   deleteStatus: document.getElementById('deleteStatus'),
   legalTitle: document.getElementById('legalTitle'),
   legalText: document.getElementById('legalText'),
-  legalExternalLink: document.getElementById('legalExternalLink')
+  legalExternalLink: document.getElementById('legalExternalLink'),
+  planView: document.getElementById('planView'),
+  planStatus: document.getElementById('planStatus'),
+  planNote: document.getElementById('planNote'),
+  buyMonthlyButton: document.getElementById('buyMonthlyButton'),
+  buyAnnualButton: document.getElementById('buyAnnualButton'),
+  restorePurchasesButton: document.getElementById('restorePurchasesButton'),
+  manageStoreButton: document.getElementById('manageStoreButton'),
+  externalPurchaseSlot: document.getElementById('externalPurchaseSlot')
 };
 
 function bridge() {
@@ -83,7 +96,7 @@ function setText(node, text) {
 }
 
 function hideAllViews() {
-  [el.signInView, el.inboxView, el.settingsView, el.deleteView, el.legalView].forEach((node) => {
+  [el.signInView, el.inboxView, el.settingsView, el.deleteView, el.legalView, el.planView].forEach((node) => {
     if (node) node.hidden = true;
   });
 }
@@ -150,10 +163,20 @@ async function syncBadge() {
   }
 }
 
+function planWords(plan) {
+  if (plan?.plan === 'active') return '加入中';
+  if (plan?.plan === 'trial') return `お試し中。残り ${plan.trialDaysRemaining || 0} 日`;
+  if (plan?.plan === 'expired') return 'お試し期間は終わりました';
+  return '未加入';
+}
+
 async function loadData() {
   const account = await api('/account');
   state.account = account.user || null;
-  setText(el.accountStatus, state.account?.email ? `${state.account.email} で確認中` : 'ログイン済みです。');
+  state.plan = account.account || null;
+  state.features = account.features || {};
+  const email = state.account?.email ? `${state.account.email} でログインしています。` : 'ログイン済みです。';
+  setText(el.accountStatus, `${email}プランは${planWords(state.plan)}です。`);
   const inbox = await api('/inbox');
   state.items = inbox.items || [];
   state.buckets = inbox.buckets || {};
@@ -353,6 +376,11 @@ async function render() {
     el.settingsView.hidden = false;
     return;
   }
+  if (current === '/plan') {
+    renderPlan();
+    el.planView.hidden = false;
+    return;
+  }
   if (current === '/account/delete') {
     el.deleteView.hidden = false;
     return;
@@ -411,6 +439,73 @@ async function enableNotifications() {
   await push.register();
 }
 
+function renderPlan() {
+  const price = Number(state.plan?.priceYen || 2980).toLocaleString('ja-JP');
+  const annual = Number(state.plan?.annualYen || 29800).toLocaleString('ja-JP');
+  setText(el.planStatus, `${planWords(state.plan)}。月額 ${price}円、年額 ${annual}円です。`);
+  if (el.externalPurchaseSlot) el.externalPurchaseSlot.replaceChildren();
+  const href = state.features.externalPurchaseLink ? externalPurchaseHref() : '';
+  if (href && el.externalPurchaseSlot) {
+    const link = document.createElement('a');
+    link.className = 'button-link';
+    link.href = href;
+    link.textContent = 'Webのプランを見る';
+    el.externalPurchaseSlot.append(link);
+  }
+}
+
+async function syncStorePurchase(result) {
+  const transaction = result.result || {};
+  if (transaction.purchaseToken) {
+    await api('/billing/play/purchase', { method: 'POST', body: { purchaseToken: transaction.purchaseToken } });
+  } else if (transaction.jwsRepresentation) {
+    await api('/billing/apple/transaction', { method: 'POST', body: { signedTransaction: transaction.jwsRepresentation } });
+  }
+  await api('/billing/refresh', { method: 'POST', body: {} });
+  await loadData();
+  renderPlan();
+}
+
+async function buyPlan(planId) {
+  setText(el.planNote, 'ストアの確認画面を開きます。');
+  try {
+    const account = await api('/billing/store-account', { method: 'POST', body: {} });
+    const result = await purchasePlan(planId, account.accountToken);
+    if (!result.ok) {
+      setText(el.planNote, 'この画面の申し込みは、この端末のストアアプリで行えます。');
+      return;
+    }
+    await syncStorePurchase(result);
+    setText(el.planNote, '申し込みを確認しました。同じアカウントの他の画面でも使えます。');
+  } catch {
+    setText(el.planNote, '申し込みを確認できませんでした。購入を復元からも状態を更新できます。');
+  }
+}
+
+async function restorePlan() {
+  setText(el.planNote, '購入を復元しています。');
+  try {
+    const restored = await restorePurchases();
+    if (!restored.ok) {
+      setText(el.planNote, 'この画面の復元は、この端末のストアアプリで行えます。');
+      return;
+    }
+    for (const purchase of restored.purchases) {
+      if (purchase.purchaseToken) {
+        await api('/billing/play/purchase', { method: 'POST', body: { purchaseToken: purchase.purchaseToken } });
+      } else if (purchase.jwsRepresentation) {
+        await api('/billing/apple/transaction', { method: 'POST', body: { signedTransaction: purchase.jwsRepresentation } });
+      }
+    }
+    await api('/billing/refresh', { method: 'POST', body: {} });
+    await loadData();
+    renderPlan();
+    setText(el.planNote, '購入を復元しました。');
+  } catch {
+    setText(el.planNote, '購入を復元できませんでした。時間をおいてもう一度復元できます。');
+  }
+}
+
 function signOut() {
   localStorage.removeItem(TOKEN_KEY);
   state.token = '';
@@ -442,6 +537,14 @@ el.goDeleteButton.addEventListener('click', () => setRoute('/account/delete'));
 el.cancelDeleteButton.addEventListener('click', () => setRoute('/settings'));
 el.deleteAccountButton.addEventListener('click', deleteAccount);
 el.signOutButton.addEventListener('click', signOut);
+el.buyMonthlyButton?.addEventListener('click', () => buyPlan('monthly'));
+el.buyAnnualButton?.addEventListener('click', () => buyPlan('annual'));
+el.restorePurchasesButton?.addEventListener('click', restorePlan);
+el.manageStoreButton?.addEventListener('click', () => {
+  openStoreSubscriptions().then((result) => {
+    setText(el.planNote, result.ok ? 'ストアの定期購入を開きました。' : 'ストアの定期購入はアプリから開けます。');
+  });
+});
 el.refreshButton.addEventListener('click', () => loadData().then(render).catch(showFallback));
 el.retryButton.addEventListener('click', () => loadData().then(render).catch(showFallback));
 document.querySelectorAll('.tab-button').forEach((button) => {
