@@ -276,17 +276,13 @@ input:focus, textarea:focus {
   gap: 12px;
 }
 .body-preview,
-.draft-output,
-.report-preview {
+.draft-output {
   white-space: pre-wrap;
   background: #f8fafc;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px;
   font-size: 13px;
-}
-.report-preview:empty {
-  display: none;
 }
 .risk-confirm {
   background: var(--warn-soft);
