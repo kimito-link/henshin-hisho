@@ -17,14 +17,14 @@ Fable(→Opus代打)の設計案には「編集は管理者/オーナーに限�
 **実コードには role/isAdmin/owner の概念が存在しない(1ユーザー=1アカウントのシンプルなモデル)**。
 マルチユーザー権限は現状のデータモデルでは実装コストが高く、MVPスコープでは過剰(Critic指摘の
 「複雑化による離脱」そのもの)。**MVPでは権限分離を作らない。ログイン済みユーザー本人が自分の
-アカウント方針を編集する、既存のdigest/weeklyReport設定と全く同じ権限モデルに合わせる。**
+アカウント方針を編集する、既存のdigest設定と全く同じ権限モデルに合わせる。**
 複数担当者での共有が要る場合は別途「マルチユーザーアカウント」自体を設計してから乗せる話であり、
 本設計のスコープ外。
 
 ## A. 理想の体験フロー
 
 **ユーザー(現状は1アカウント1ユーザー)**
-1. Web版の設定画面(既存の digest 設定・週次レポート設定と同じ並び)で `方針設定` を開く。
+1. Web版の設定画面(既存の digest 設定と同じ並び)で `方針設定` を開く。
 2. **業種テンプレを1つ選ぶ**(例: 「制作・受託」「物販・卸」「サービス業」)。テンプレが構造化フィールドを
    既定値で埋める。空欄から書かせない(離脱防止)。
 3. 構造化フィールドを数個だけ確認・上書きする:
@@ -56,7 +56,7 @@ account-policy-settings.js  ──POST /account/policy-settings──▶  normal
                                  backend/src/kv.js
                                  putUser(env, updated)
                                  user.accountPolicy を保持
-                                 (digest / weeklyReport と同じ階層)
+                                 (digest と同じ階層)
 ```
 
 1. **`backend/src/account-policy.js`(新規・唯一の正)** — `normalizeAccountPolicy(value)` /
@@ -68,14 +68,14 @@ account-policy-settings.js  ──POST /account/policy-settings──▶  normal
    `options` に `accountPolicy` を含めて渡すだけ(現行シグネチャは `item, options` の2引数。
    3番目の引数を足すのではなく、既存の `options.tone`/`options.intent` と同じ経路で
    `options.accountPolicy` を渡す)。`lines.push` の並びに1ブロック差し込むだけで大改修なし。
-3. **`web-app/`の設定画面(新規・Web版のみ)** — 既存のdigest設定・weeklyReport設定と同じ画面/フォームに
+3. **`web-app/`の設定画面(新規・Web版のみ)** — 既存のdigest設定と同じ画面/フォームに
    セクション追加。**iOSの`www/`には絶対にコピーしない**。課金文言は一切置かない。
 
 ## C. 具体機構(ファイル・エンドポイント・スキーマ)
 
 ### データモデル(`user.accountPolicy`)
 
-`auth.js`のuserオブジェクト直下に、`digest`/`weeklyReport`/`avgCaseValue`と並べて配置。
+`auth.js`のuserオブジェクト直下に、`digest`と並べて配置。
 **保存は必ず `putUser(env, { ...user, accountPolicy: normalized, updatedAt: nowSeconds() })` の形**
 (`digest.js:31-39`の`updateDigestSettings`と同一パターン)。部分マージ禁止。
 
@@ -130,7 +130,7 @@ export async function updateAccountPolicy(env, user, patch = {}) {
 
 ### エンドポイント(`backend/src/index.js`に追加)
 
-既存の`/account/digest-settings`・`/account/report-settings`(`index.js:182-187`)と同じ並びに追加:
+既存の`/account/digest-settings`と同じ並びに追加:
 
 ```js
 if (url.pathname === '/account/policy-settings' && request.method === 'POST') {
@@ -140,7 +140,7 @@ if (url.pathname === '/account/policy-settings' && request.method === 'POST') {
 
 `policySettingsResponse`は`digestSettingsResponse`と同型(`requireAuth`→`readJson`→
 `updateAccountPolicy`→`jsonResponse`)。GETは`/account`の既存レスポンス(`accountResponse`)に
-`accountPolicy: accountPolicyForUser(user)`を1行足すだけで十分(digest/weeklyReportと同じ扱い、
+`accountPolicy: accountPolicyForUser(user)`を1行足すだけで十分(digestと同じ扱い、
 専用GETエンドポイントは不要)。
 
 ### `draft-gen.js`への注入
@@ -179,7 +179,7 @@ if (options.accountPolicy) {
 5. **データ漏洩** — 既存KVの`putUser`保護と同格(auth.jsの既存認証で守られる)。新規暗号化層は
    追加しない(既存パターンとの不整合リスクの方が大きい)。
 6. **権限分離** — ★上記「重要な訂正」のとおり、実データモデルにroleが無いためMVPでは実装しない。
-   ログイン済み本人のみが編集できる(既存のdigest/weeklyReport設定と同じ権限)。
+   ログイン済み本人のみが編集できる(既存のdigest設定と同じ権限)。
 
 ## E. LTV/価格設計
 
@@ -246,7 +246,7 @@ iOS/Android対応、下書き画面への「方針v○表示」UI。これらは
 ## I. 地雷と回避策
 
 1. **KV丸ごと上書きのレース** — 保存は例外なく`putUser(env, { ...user, accountPolicy, updatedAt })`。
-   `digest.js`/`weekly-report.js`と同じ保存経路を通し、独自ロジックを書かない。
+   `digest.js`と同じ保存経路を通し、独自ロジックを書かない。
 2. **正規化ヘルパの複製(CORS 3連続却下の真因と同型のバグパターン)** — `normalizeAccountPolicy`は
    `account-policy.js`の1箇所のみ。`normalizeText`は`schema.js`の既存関数を`import`して使う
    (新規に同名関数を作らない)。
@@ -263,6 +263,6 @@ iOS/Android対応、下書き画面への「方針v○表示」UI。これらは
 ---
 
 **設計上の要点(1行)**: 新規は`account-policy.js`1ファイル+エンドポイント1本+GET拡張1行+
-`draft-gen.js`のoptions受け渡し+Web設定画面1枚。既存パターン(digest/weekly-reportの正規化・
+`draft-gen.js`のoptions受け渡し+Web設定画面1枚。既存パターン(digestの正規化・
 丸ごと上書き・Web限定課金)を一切逸脱せず、方針の絶対制約(数値)とトーン裁量(言い回し)の優先順位
 だけを明文で固定する。権限分離は実データモデルに合わせてMVPスコープ外とする。

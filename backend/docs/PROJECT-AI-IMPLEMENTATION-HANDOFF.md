@@ -10,7 +10,7 @@
 - `llm.js` の `callOpenRouter` は **`messages: [{role:'user'}]` 単発のみ対応**（system role非対応）。プロンプトは1本のuserPrompt文字列に畳む設計にする（`llm.js` は改造しない）。
 - `requireAuth(request, env)` は `{ ok, token, user }` を返す。`user.id` でスコープする。
 - ルーティングは `index.js` のフラットなif連鎖＋`inboxRouteMatch` 方式。CORS/JSONは `http.js` の `jsonResponse`/`readJson` が正本（コピー禁止のコメントあり）。
-- `scheduled()` は毎時cron（`0 * * * *`）で digest / weekly-report を回している。ここにChatwork同期を**try/catchで包んで**追加する。
+- `scheduled()` は毎時cron（`0 * * * *`）で digest を回している。週次成果レポートは廃止済みで、このcronから送らない。ここにChatwork同期を**try/catchで包んで**追加する。
 - 既存KVキーは `users:` `email-index:` `session:` `magic:` `inbox:{userId}:` `line-user:` `diag:unmatched-origin:`。新機能はこれらに一切触れない。
 
 ---
@@ -349,7 +349,7 @@ export async function runChatworkSync(env) {
 `index.js` の `scheduled()` に追加（既存2行は触らない）:
 
 ```js
-try { await runChatworkSync(env); } catch { /* digest/weekly-reportを道連れにしない */ }
+try { await runChatworkSync(env); } catch { /* digestを道連れにしない */ }
 ```
 
 ---
@@ -379,7 +379,7 @@ try { await runChatworkSync(env); } catch { /* digest/weekly-reportを道連れ�
 7. **概要欄の再同期で手動編集が消える**: `description_masked` は同期のたび上書きされる。案件カルテとして手で育てるテキストは `projects.summary`（同期が触らない列）に分離済み。混同しない。
 8. **マスク正規表現の過剰マッチ**: 32文字連続英数はURL断片に誤爆しうるため負の先読みでURL除外済み。それでも誤爆したら「保存済み本文は復元不能」— 取り込み前にパターン変更をテストで検証する（`masker.test.js` を最初に書く）。
 9. **手動貼り付けの重複**: external_message_idを毎回生成するため同文を2回貼ると2件入る。Phase 1は許容（削除は `PATCH` 追加より、D1コンソールで直接消す運用でよい）。
-10. **`scheduled()` の例外伝播**: Chatwork API障害で digest / weekly-report を止めない。try/catch必須（F節のコード形を厳守）。
+10. **`scheduled()` の例外伝播**: Chatwork API障害で digest を止めない。try/catch必須（F節のコード形を厳守）。週次成果レポートはこのcronに戻さない。
 
 ---
 
