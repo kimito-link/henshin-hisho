@@ -35,7 +35,6 @@ var shelfList = document.getElementById('shelfList');
 var itemDetail = document.getElementById('itemDetail');
 var settingsStatus = document.getElementById('settingsStatus');
 var digestSettingsStatus = document.getElementById('digestSettingsStatus');
-var reportSettingsStatus = document.getElementById('reportSettingsStatus');
 var policySettingsStatus = document.getElementById('policySettingsStatus');
 var billingPanel = document.getElementById('billingPanel');
 var billingModulePromise = null;
@@ -179,7 +178,6 @@ async function refreshAccount() {
   setText(accountStatus, accountText(data.account));
   await renderBillingIfAllowed(data.account);
   renderDigestSettings(data.settings?.digest || {});
-  renderReportSettings(data.settings || {});
   renderPolicySettings(data.settings?.accountPolicy || {});
 }
 
@@ -190,12 +188,6 @@ function renderDigestSettings(digest) {
   var pushButton = document.getElementById('pushSubscribeButton');
   var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   pushButton.classList.toggle('is-hidden', !(isStandalone && 'PushManager' in window && 'serviceWorker' in navigator));
-}
-
-function renderReportSettings(settings) {
-  var weekly = settings.weeklyReport || {};
-  document.getElementById('weeklyReportEnabled').checked = weekly.enabled !== false;
-  document.getElementById('avgCaseValue').value = settings.avgCaseValue > 0 ? String(settings.avgCaseValue) : '';
 }
 
 var INDUSTRY_TEMPLATE_DEFAULTS = {
@@ -896,23 +888,6 @@ function configureNativeReviewUi() {
   if (signupButton) signupButton.classList.add('is-hidden');
 }
 
-document.getElementById('reportSettingsForm').addEventListener('submit', async function (event) {
-  event.preventDefault();
-  try {
-    await api('/account/report-settings', {
-      method: 'POST',
-      body: {
-        enabled: document.getElementById('weeklyReportEnabled').checked,
-        avgCaseValue: Number(document.getElementById('avgCaseValue').value || 0)
-      }
-    });
-    setText(reportSettingsStatus, '保存しました。');
-    await refreshAccount();
-  } catch {
-    setText(reportSettingsStatus, '保存できませんでした。');
-  }
-});
-
 document.getElementById('policyIndustryTemplate').addEventListener('change', function (event) {
   var defaults = INDUSTRY_TEMPLATE_DEFAULTS[event.target.value];
   if (!defaults) return;
@@ -941,16 +916,6 @@ document.getElementById('policySettingsForm').addEventListener('submit', async f
     await refreshAccount();
   } catch {
     setText(policySettingsStatus, '保存できませんでした。');
-  }
-});
-
-document.getElementById('weeklyReportPreviewButton').addEventListener('click', async function () {
-  try {
-    var report = await api('/report/weekly');
-    setText(document.getElementById('weeklyReportPreview'), report.text || '');
-    setText(reportSettingsStatus, '');
-  } catch {
-    setText(reportSettingsStatus, 'レポートを取得できませんでした。');
   }
 });
 

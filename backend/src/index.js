@@ -21,12 +21,6 @@ import { deletePushSubscription, publicPushConfig, savePushSubscription } from '
 import { handleProjectsRoute } from './projects/routes.js';
 import { runChatworkSync } from './connectors/chatwork.js';
 import { listAllChannelLinksBySource, loadStaffMap } from './projects/db.js';
-import {
-  runWeeklyReportSchedule,
-  updateReportSettings,
-  weeklyReportForUser,
-  weeklyReportSettingsForUser
-} from './weekly-report.js';
 // CORS/JSONレスポンスの正は http.js(inbox.js と共通。コピーを作らない)。
 import { allowedOrigins, corsHeaders, jsonResponse, readJson } from './http.js';
 
@@ -54,9 +48,7 @@ async function accountResponse(request, env) {
       account: accountPlan(auth.user),
       settings: {
         digest: digestSettingsForUser(auth.user),
-        weeklyReport: weeklyReportSettingsForUser(auth.user),
-        accountPolicy: accountPolicyForUser(auth.user),
-        avgCaseValue: Number(auth.user.avgCaseValue || 0)
+        accountPolicy: accountPolicyForUser(auth.user)
       },
       features: {
         gmailConnectEnabled: String(env.GMAIL_CONNECT_ENABLED || 'false').toLowerCase() === 'true'
@@ -68,26 +60,6 @@ async function accountResponse(request, env) {
     }
     return jsonResponse(request, env, { ok: false, reason: 'server_error' }, 500);
   }
-}
-
-async function reportSettingsResponse(request, env) {
-  try {
-    const auth = await requireAuth(request, env);
-    if (!auth.ok) return jsonResponse(request, env, auth.body, auth.status);
-    const payload = await readJson(request);
-    if (!payload) return jsonResponse(request, env, { ok: false, reason: 'invalid_json' }, 400);
-    const settings = await updateReportSettings(env, auth.user, payload);
-    return jsonResponse(request, env, { ok: true, ...settings });
-  } catch {
-    return jsonResponse(request, env, { ok: false, reason: 'server_error' }, 500);
-  }
-}
-
-async function weeklyReportResponse(request, env) {
-  const auth = await requireAuth(request, env);
-  if (!auth.ok) return jsonResponse(request, env, auth.body, auth.status);
-  const report = await weeklyReportForUser(env, auth.user);
-  return jsonResponse(request, env, report);
 }
 
 async function digestSettingsResponse(request, env) {
@@ -216,14 +188,8 @@ export default {
     if (url.pathname === '/account/digest-settings' && request.method === 'POST') {
       return await digestSettingsResponse(request, env);
     }
-    if (url.pathname === '/account/report-settings' && request.method === 'POST') {
-      return await reportSettingsResponse(request, env);
-    }
     if (url.pathname === '/account/policy-settings' && request.method === 'POST') {
       return await policySettingsResponse(request, env);
-    }
-    if (url.pathname === '/report/weekly' && request.method === 'GET') {
-      return await weeklyReportResponse(request, env);
     }
     if (url.pathname === '/digest/unsubscribe' && (request.method === 'POST' || request.method === 'GET')) {
       return await digestUnsubscribeResponse(request, env);
@@ -271,14 +237,13 @@ export default {
   async scheduled(event, env) {
     const now = event?.scheduledTime || Date.now();
     await runDigestSchedule(env, { now });
-    await runWeeklyReportSchedule(env, { now });
     if (env.PROJECT_DB) {
       try {
         const channels = await listAllChannelLinksBySource(env.PROJECT_DB, { source: 'chatwork' });
         const staffMap = await loadStaffMap(env.PROJECT_DB);
         await runChatworkSync(env, env.PROJECT_DB, channels, staffMap);
       } catch {
-        // Chatwork API障害でdigest/weekly-reportを道連れにしない
+        // Chatwork API障害でdigestを道連れにしない
       }
     }
   }

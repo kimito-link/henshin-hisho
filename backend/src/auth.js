@@ -122,10 +122,6 @@ export async function signup(env, { email, password } = {}) {
       timezone: 'Asia/Tokyo',
       channel: 'email'
     },
-    weeklyReport: {
-      enabled: true
-    },
-    avgCaseValue: 0,
     createdAt: now,
     updatedAt: now
   };
@@ -161,8 +157,6 @@ export async function login(env, { email, password } = {}) {
         trialEndsAt: now + 60 * 60 * 24 * 365 * 10, // 10 years
         plan: 'active',
         digest: { enabled: true, hour: 8, timezone: 'Asia/Tokyo', channel: 'email' },
-        weeklyReport: { enabled: true },
-        avgCaseValue: 0,
         createdAt: now,
         updatedAt: now
       };

@@ -129,9 +129,7 @@ import { accountPolicyForUser, updateAccountPolicy } from './account-policy.js';
 ```diff
   settings: {
     digest: digestSettingsForUser(auth.user),
-    weeklyReport: weeklyReportSettingsForUser(auth.user),
-+   accountPolicy: accountPolicyForUser(auth.user),
-    avgCaseValue: Number(auth.user.avgCaseValue || 0)
++   accountPolicy: accountPolicyForUser(auth.user)
   },
 ```
 
@@ -193,7 +191,7 @@ npm test   # 新規テスト含め全緑を確認
 
 ### 7. Web版UI(`web-app/`)
 
-既存の設定画面(digest設定・weeklyReport設定が並ぶ画面。`web-app/app.js`の`renderSettings`相当を検索)
+既存の設定画面(digest設定が並ぶ画面。`web-app/app.js`の設定フォームを検索)
 に、以下のフォームを1セクション追加:
 
 - 業種テンプレのセレクトボックス(選ぶと下のフィールドに既定値を仮入力。テンプレ定義自体はこの
