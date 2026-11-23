@@ -1,4 +1,7 @@
 import { normalizeText } from './schema.js';
+import { extractTriageJson } from './shared/ai-triage/json-repair.mjs';
+
+export { extractTriageJson };
 
 export const TRIAGE_CATEGORIES = Object.freeze([
   'reply_needed',
@@ -34,105 +37,6 @@ function pickEnum(value, allowed, fallback) {
 function normalizeStringArray(value = [], maxItems = 5, maxLength = 160) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => normalizeText(item, maxLength)).filter(Boolean).slice(0, maxItems);
-}
-
-function scanJsonFragment(text) {
-  let inString = false;
-  let escaped = false;
-  const stack = [];
-  const commas = [];
-
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === '\\') escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') inString = true;
-    else if (ch === '{' || ch === '[') stack.push(ch);
-    else if (ch === '}' && stack[stack.length - 1] === '{') stack.pop();
-    else if (ch === ']' && stack[stack.length - 1] === '[') stack.pop();
-    else if (ch === ',') commas.push(i);
-  }
-  return { inString, stack, commas };
-}
-
-function closeOpenJsonStructures(text) {
-  let repaired = String(text || '').replace(/[ \t\r\n]+$/, '');
-  let state = scanJsonFragment(repaired);
-  if (state.inString) repaired += '"';
-  state = scanJsonFragment(repaired);
-  while (state.stack.length) repaired += state.stack.pop() === '{' ? '}' : ']';
-  return repaired;
-}
-
-function canParseJson(text) {
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function repairCandidate(fragment) {
-  let repaired = String(fragment || '').replace(/[ \t\r\n]+$/, '');
-  const state = scanJsonFragment(repaired);
-  if (!state.inString) {
-    const trimmed = repaired.replace(/[ \t\r\n]+$/, '');
-    if (trimmed.endsWith(',')) {
-      repaired = trimmed.slice(0, -1).replace(/[ \t\r\n]+$/, '');
-    } else if (trimmed.endsWith(':')) {
-      const lastComma = state.commas[state.commas.length - 1];
-      if (Number.isFinite(lastComma)) repaired = repaired.slice(0, lastComma).replace(/[ \t\r\n]+$/, '');
-    }
-  }
-  return closeOpenJsonStructures(repaired);
-}
-
-function repairTruncatedJson(fragment) {
-  let candidate = String(fragment || '');
-  for (let i = 0; i < 12; i += 1) {
-    const repaired = repairCandidate(candidate);
-    if (canParseJson(repaired)) return repaired;
-    const state = scanJsonFragment(candidate);
-    const lastComma = state.commas[state.commas.length - 1];
-    if (!Number.isFinite(lastComma) || lastComma <= 0) break;
-    candidate = candidate.slice(0, lastComma);
-  }
-  return null;
-}
-
-export function extractTriageJson(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return { data: {}, status: 'failed' };
-  const start = raw.indexOf('{');
-  if (start < 0) return { data: {}, status: 'failed' };
-
-  try {
-    return { data: JSON.parse(raw), status: 'ok' };
-  } catch {
-    const end = raw.lastIndexOf('}');
-    if (end > start) {
-      try {
-        return { data: JSON.parse(raw.slice(start, end + 1)), status: 'ok' };
-      } catch {
-        // Try truncated JSON repair below.
-      }
-    }
-  }
-
-  const repaired = repairTruncatedJson(raw.slice(start));
-  if (repaired !== null) {
-    try {
-      return { data: JSON.parse(repaired), status: 'repaired' };
-    } catch {
-      // Fall through.
-    }
-  }
-  return { data: {}, status: 'failed' };
 }
 
 function keywordRiskOverlay(item, result) {

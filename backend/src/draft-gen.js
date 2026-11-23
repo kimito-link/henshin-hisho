@@ -1,15 +1,7 @@
 import { normalizeText } from './schema.js';
+import { DRAFT_TONE_INSTRUCTIONS, pickTone } from './shared/ai-triage/draft-tone.mjs';
 
-const DRAFT_TONE_INSTRUCTIONS = Object.freeze({
-  polite: '丁寧に',
-  firm: 'はっきり強めに、ただし攻撃的にしない',
-  calm: '冷静に感情を抑えて',
-  casual: 'いつもの砕けた調子で'
-});
-
-export function pickTone(value) {
-  return Object.prototype.hasOwnProperty.call(DRAFT_TONE_INSTRUCTIONS, value) ? value : 'polite';
-}
+export { pickTone };
 
 const BUNDLE_POLICY_LABEL = {
   encourage: 'まとめ売りを積極的に提案してよい',
